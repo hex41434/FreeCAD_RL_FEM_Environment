@@ -1,0 +1,46 @@
+site_name: RLFEM
+
+theme:
+  name: material
+
+  features:
+     - header.autohide
+  
+  palette:
+    primary: green
+
+  icon:
+    repo: fontawesome/brands/github
+
+copyright: Copyright &copy; 2021 Aida Farahani, Payam Atoofi
+repo_url: https://github.com/hex41434/FreeCAD_RL_FEM_Simulator
+
+plugins:
+  - search
+  - mkdocstrings
+  - mknotebooks:
+      execute: false
+      write_markdown: false
+      binder: false
+
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: "#"
+
+extra_javascript:
+  - javascripts/config.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+
+nav:
+  - Home: 'index.md'
+  - API:
+    - 'RLFEM.md'
+    - 'FreeCADWrapper.md'
