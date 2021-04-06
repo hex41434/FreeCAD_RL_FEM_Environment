@@ -3,7 +3,7 @@ import setuptools
 setuptools.setup(
     name='RLFEM',
     version='0.0.1',
-    author='Aida Farahani',
+    author='Aida Farahani, Payam Atoofi, Julien Vitay',
     author_email='aida.farahani@gmail.com ',
     description='Gym-like environment allowing to perform FEM simulations using freecad.',
     platforms='Posix; MacOS X; Windows',

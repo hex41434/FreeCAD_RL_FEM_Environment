@@ -7,12 +7,12 @@ theme:
      - header.autohide
   
   palette:
-    primary: green
+    primary: teal
 
   icon:
     repo: fontawesome/brands/github
 
-copyright: Copyright &copy; 2021 Aida Farahani, Payam Atoofi
+copyright: Copyright &copy; 2021 Aida Farahani, Payam Atoofi, Julien Vitay
 repo_url: https://github.com/hex41434/FreeCAD_RL_FEM_Simulator
 
 plugins:
