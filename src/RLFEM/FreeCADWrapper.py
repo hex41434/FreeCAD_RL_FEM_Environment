@@ -28,35 +28,48 @@ class FreeCADWrapper(object):
     TODO: more description
     """
 
-    def __init__(self, path=''):
+    def __init__(self, path='', force_value=1e3, force_factor=1, num_actions=1, flag_rand_action=0, flag_save=0):
         """
         Args:
             path: path to the .ply file.
         """
         self.path = path
-        
+        self.force_value = force_value
+        self.force_factor = force_factor
+        self.num_actions = num_actions
+        self.count_action = 1
+        self.flag_rand_action = flag_rand_action
+        self.flag_first_run = 1
+        self.flag_save = flag_save
+        # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
-        # doc = FreeCAD.getDocument("Unnamed") # CHANGE LATER!
-        self.doc = App.newDocument("doc")
+        # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
+        self.doc = App.newDocument('doc')
 
         if not (self.path == ''):
             self.insert_mesh()
         else:
             # TODO: correct the dimensions
-            obj = self.doc.addObject('Part::Box', 'Box')
-            obj.Height = 2
-            obj.Width = 5
-            obj.Length = 50
+            self.create_initial_cube()
 
-        self.obj = self.doc.Objects[-1]
-
-        if (self.obj.Module == 'Mesh'):
-            self.convert2solidmesh()
-            self.obj = self.doc.Objects[-1]
+        self.initialize_obj()
+        self.calc_obj_info()
 
         self.box_obj = self.doc.addObject('Part::Box', 'Box')
         # box_obj.ViewObject.Visibility = False
 
+    def initialize_obj(self):
+        if (self.flag_first_run == 1):
+            self.obj = self.doc.Objects[-1]
+        else:
+            self.obj = self.doc.getObject('Mesh')
+
+        if (self.obj.Module == 'Mesh'):
+            self.convert2solidmesh()
+            self.obj = self.doc.Objects[-1]
+            if (self.flag_first_run == 0):
+                self.doc.removeObject(self.doc.getObject('Mesh'))
+    def calc_obj_info(self):
         self.v_CoM, self.v_NoF = self.extract_info_mesh(self.obj)
 
         self.min_vals = self.v_CoM.min(axis=0)
@@ -88,6 +101,19 @@ class FreeCADWrapper(object):
     def insert_mesh(self):
         Mesh.insert(self.path)
 
+    def create_initial_cube(self):
+        obj = self.doc.addObject('Part::Box', 'Box')
+        obj.Height = 2
+        obj.Width = 5
+        obj.Length = 50
+        msh = self.doc.addObject('Mesh::Feature', 'Cube_Mesh')
+        __part__ = obj
+        __shape__ = __part__.Shape.copy(False)
+        __shape__.Placement = __part__.getGlobalPlacement()
+        msh.Mesh = MeshPart.meshFromShape(Shape=__shape__, Fineness=2, SecondOrder=0, Optimize=1, AllowQuad=0)
+        msh.Label = 'Cube_Meshed'
+        del msh, __part__, __shape__
+        self.doc.removeObject(obj.Name)
 
     def select_visible_obj(self):
         Gui.Selection.clearSelection()
@@ -100,16 +126,16 @@ class FreeCADWrapper(object):
     def covert2solid(self, shape_obj):
         __s__ = shape_obj.Shape
         __s__ = Part.Solid(__s__)
-        solid_obj = self.doc.addObject("Part::Feature", shape_obj.Name + '_solid')
+        solid_obj = self.doc.addObject('Part::Feature', shape_obj.Name + '_solid')
         solid_obj.Label = shape_obj.Name + ' (Solid)'
         solid_obj.Shape = __s__
-        solid_obj.Shape = solid_obj.Shape.removeSplitter()
+        #solid_obj.Shape = solid_obj.Shape.removeSplitter()
         del __s__
         return solid_obj
 
 
     def convert2solidmesh(self):
-        shape_obj = self.doc.addObject("Part::Feature", self.obj.Name)
+        shape_obj = self.doc.addObject('Part::Feature', self.obj.Name)
         __shape__ = Part.Shape()
         __shape__.makeShapeFromMesh(self.obj.Mesh.Topology, 0.1)
         shape_obj.Shape = __shape__
@@ -178,7 +204,7 @@ class FreeCADWrapper(object):
 
 
     def add_FEM_constraint_fixed(self, obj):
-        self.doc.addObject("Fem::ConstraintFixed", "FemConstraintFixed")
+        self.doc.addObject('Fem::ConstraintFixed', 'FemConstraintFixed')
         self.doc.FemConstraintFixed.Scale = 1
         self.doc.Analysis.addObject(self.doc.FemConstraintFixed)
         self.face_fixed_indx = self.get_faces_constraint_fixed()
@@ -186,33 +212,33 @@ class FreeCADWrapper(object):
             zip([obj] * len(self.face_fixed_indx), ['Face' + str(x + 1) for x in self.face_fixed_indx]))
 
     def add_FEM_constraint_force(self, obj, box_obj, c_circle, r_circle, force_dir_str):
-        self.doc.addObject("Fem::ConstraintForce", "FemConstraintForce")
+        self.doc.addObject('Fem::ConstraintForce', 'FemConstraintForce')
         self.doc.Analysis.addObject(self.doc.FemConstraintForce)
 
         self.face_force_indx = self.get_faces_constraint_force(c_circle, r_circle, force_dir_str)
 
-        self.doc.FemConstraintForce.Force = 1000
-        self.doc.FemConstraintForce.Direction = (box_obj, ["Face6"])
+        self.doc.FemConstraintForce.Force = self.force_value
+        self.doc.FemConstraintForce.Direction = (box_obj, ['Face6'])
         self.doc.FemConstraintForce.Reversed = True if force_dir_str == 'top' else False
-        self.doc.FemConstraintForce.Scale = 100
+        self.doc.FemConstraintForce.Scale = self.force_factor # TODO: this doesn't work, find a better way
         self.doc.FemConstraintForce.References = list(
             zip([obj] * len(self.face_force_indx), ['Face' + str(x + 1) for x in self.face_force_indx]))
 
 
     def create_FEM_solid(self):
-        self.material_object = ObjectsFem.makeMaterialSolid(self.doc, "SolidMaterial")
+        self.material_object = ObjectsFem.makeMaterialSolid(self.doc, 'SolidMaterial')
         mat = self.material_object.Material
-        mat['Name'] = "Steel-Generic"
-        mat['YoungsModulus'] = "210000 MPa"
-        mat['PoissonRatio'] = "0.30"
-        mat['Density'] = "7900 kg/m^3"
+        mat['Name'] = 'Steel-Generic'
+        mat['YoungsModulus'] = '210000 MPa'
+        mat['PoissonRatio'] = '0.30'
+        mat['Density'] = '7900 kg/m^3'
         self.material_object.Material = mat
         # FemGui.getActiveAnalysis().addObject(material_object)
         self.doc.Analysis.addObject(self.material_object)
 
 
     def creating_analysis(self):
-        self.analysis_object = ObjectsFem.makeAnalysis(FreeCAD.ActiveDocument, 'Analysis')
+        self.analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
         self.analysis_object.addObject(ObjectsFem.makeSolverCalculixCcxTools(self.doc))
 
     def analysis_run(self, obj, box_obj, c_circle, r_circle, force_dir_str):
@@ -231,14 +257,14 @@ class FreeCADWrapper(object):
         if not message:
             fea.purge_results()
             fea.write_inp_file()
-            # on error at inp file writing, the inp file path "" was returned (even if the file was written)
+            # on error at inp file writing, the inp file path '' was returned (even if the file was written)
             # if we would write the inp file anyway, we need to again set it manually
             # fea.inp_file_name = '/tmp/FEMWB/FEMMeshGmsh.inp'
             fea.ccx_run()
             fea.load_results()
         else:
-            FreeCAD.Console.PrintError("Oh, we have a problem! {}\n".format(message))  # in report view
-            print("Oh, we have a problem! {}\n".format(message))  # in python console
+            FreeCAD.Console.PrintError('Oh, we have a problem! {}\n'.format(message))  # in report view
+            print('Oh, we have a problem! {}\n'.format(message))  # in python console
 
     def get_result(self):
         for m in self.doc.Analysis.Group:
@@ -249,33 +275,67 @@ class FreeCADWrapper(object):
 
         out_mesh = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result_object)
         self.new_mesh = Mesh.Mesh(out_mesh)
+        Mesh.show(self.new_mesh)
+        msh = self.doc.getObject('Mesh')
+        msh.Label = 'Mesh'
+        del msh
 
     def save_result(self, save_path):
         # TODO: add proper save_path and have num_action included in the name
-        Mesh.show(self.new_mesh)
         ###5
         # export one mesh as .ply file
         __objs__ = []
-        __objs__.append(self.doc.getObject("Mesh"))
+        __objs__.append(self.doc.getObject('Mesh'))
 
-        path = "./"
+        save_path = './'
 
-        filename = path + "test_01" + ".ply"
+        filename = save_path + 'result_' + str(self.count_action) + '.ply'
         print(__objs__)
 
-        # Mesh.export(__objs__,u"wowply.ply")
+        # Mesh.export(__objs__,u'wowply.ply')
         Mesh.export(__objs__, filename)
 
         del __objs__
 
-    def run(self):
-        # c_circle = np.array([15, 7])
-        c_circle = np.array([40, 7])
-        r_circle = 5
-        force_dir_str = 'top'
+    def reset_doc(self):
+        for obj in self.doc.Objects:
+            if not (obj.Label == 'Mesh' or obj.Label == 'Box'):
+                self.doc.removeObject(obj.Name)
+            elif (obj.Label == 'Mesh'):
+                obj.Label = 'Mesh_old'
 
-        self.analysis_run(self.obj, self.box_obj, c_circle, r_circle, force_dir_str)
-        self.doc.recompute()
-        self.calc_analysis()
-        self.get_result()
+    def run(self, c_circle=None, r_circle=None, force_dir_str='top'):
+        while (self.count_action <= self.num_actions):
+
+            if (self.flag_first_run == 1):
+                self.flag_first_run = 0
+            else:
+                self.reset_doc()
+                self.initialize_obj()
+                self.calc_obj_info()
+
+            if (self.flag_rand_action == 0) and ((c_circle is None) | (r_circle is None)):
+                # c_circle = np.array([15, 7])
+                c_circle = np.array([40, 7])
+                r_circle = 5
+                force_dir_str = 'top'
+
+            if (self.flag_rand_action == 1):
+                c_circle, r_circle, force_dir_str = self.get_random_action()
+            self.analysis_run(self.obj, self.box_obj, c_circle, r_circle, force_dir_str)
+            self.doc.recompute()
+            self.calc_analysis()
+            self.get_result()
+
+            if (self.flag_save == 1):
+                self.save_result('./')
+            self.count_action += 1
+
+    def get_random_action(self):
+        # TODO: is this optimized? maybe there is a cleaner way?
+        c_circle = np.array([np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
+                             np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
+        r_circle = np.random.uniform(self.EPSILON * 10, abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
+        force_dir_str = 'top' if np.random.randint(2, size=1) else 'bottom'
+        return c_circle, r_circle, force_dir_str
 
