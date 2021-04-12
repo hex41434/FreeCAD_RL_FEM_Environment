@@ -15,7 +15,7 @@ try:
     # from Mod import Fem
     import Fem
     import Mesh
-	import MeshPart
+    import MeshPart
     import femmesh.femmesh2mesh
     from femtools import ccxtools
 except:
