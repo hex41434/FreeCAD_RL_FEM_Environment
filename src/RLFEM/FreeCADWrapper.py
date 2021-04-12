@@ -15,6 +15,7 @@ try:
     # from Mod import Fem
     import Fem
     import Mesh
+	import MeshPart
     import femmesh.femmesh2mesh
     from femtools import ccxtools
 except:
@@ -28,19 +29,21 @@ class FreeCADWrapper(object):
     TODO: more description
     """
 
-    def __init__(self, path='', force_value=1e3, force_factor=1, num_actions=1, flag_rand_action=0, flag_save=0):
+    def __init__(self, path='', force_value=1e3, force_factor=1, num_actions=1, flag_rand_action=0, flag_save=0, action_type='circle'):
         """
         Args:
             path: path to the .ply file.
         """
+    
         self.path = path
         self.force_value = force_value
         self.force_factor = force_factor
         self.num_actions = num_actions
-        self.count_action = 1
+        self.count_action = 0
         self.flag_rand_action = flag_rand_action
         self.flag_first_run = 1
         self.flag_save = flag_save
+        self.action_type = action_type # 'circle' or 'rectangle'
         # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
         # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
@@ -62,13 +65,13 @@ class FreeCADWrapper(object):
         if (self.flag_first_run == 1):
             self.obj = self.doc.Objects[-1]
         else:
-            self.obj = self.doc.getObject('Mesh')
+            self.obj = self.doc.getObject('Mesh_{:02d}'.format(self.count_action - 1))
 
         if (self.obj.Module == 'Mesh'):
             self.convert2solidmesh()
             self.obj = self.doc.Objects[-1]
-            if (self.flag_first_run == 0):
-                self.doc.removeObject(self.doc.getObject('Mesh'))
+            # if (self.flag_first_run == 0):
+            #     self.doc.removeObject(self.doc.getObject('Mesh'))
     def calc_obj_info(self):
         self.v_CoM, self.v_NoF = self.extract_info_mesh(self.obj)
 
@@ -79,7 +82,9 @@ class FreeCADWrapper(object):
         self.WIDTH = self.obj_dims[1]  # y direction
         self.HEIGHT = self.obj_dims[2]  # z direction
 
+        # TODO: arbitrary numbers, give as parameters
         self.NUM_BIN = 1000
+        self.NUM_CS = 20 # number of cross-sections, in case of rectangular actions space
 
         self.flag_elong = 'length'
         self.calc_epsilon()
@@ -129,7 +134,8 @@ class FreeCADWrapper(object):
         solid_obj = self.doc.addObject('Part::Feature', shape_obj.Name + '_solid')
         solid_obj.Label = shape_obj.Name + ' (Solid)'
         solid_obj.Shape = __s__
-        #solid_obj.Shape = solid_obj.Shape.removeSplitter()
+        if (not (self.path == '')) or (self.flag_first_run == 0):
+            solid_obj.Shape = solid_obj.Shape.removeSplitter()
         del __s__
         return solid_obj
 
@@ -168,6 +174,7 @@ class FreeCADWrapper(object):
         mask_2 = (abs(self.v_CoM_sorted[:, self.column_index] - self.max_vals[self.column_index]) < self.EPSILON)
         normal_vector = np.zeros(3)
         normal_vector[self.column_index] = 1
+        # TODO: 0.95 is arbitrary, it should be given as a parameter.
         mask_normal_1 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_1, -1].astype(int), :], -normal_vector) > 0.95
         mask_normal_2 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_2, -1].astype(int), :], normal_vector) > 0.95
         face_fixed_indx = np.concatenate(
@@ -181,19 +188,29 @@ class FreeCADWrapper(object):
             print('center of circle does not lie on the mesh')
             # TODO: CHECK radius as well!
 
-    def get_faces_constraint_force(self, c_circle, r_circle, force_dir_str):
+    def get_faces_constraint_force(self, region_values, force_dir_str):
+        face_indx = []
+        if self.action_type == 'circle':
+            c_circle, r_circle = region_values
+            mask_c_circle_1 = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
+            mask_c_circle_2 = np.linalg.norm(self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
+                                             axis=1) <= r_circle
+            face_indx = self.v_CoM_sorted[mask_c_circle_1, -1].astype(int)[mask_c_circle_2]
 
-        mask_c_circle_1 = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
-        mask_c_circle_2 = np.linalg.norm(self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
-                                         axis=1) <= r_circle
+        elif (self.action_type == 'rectangle'):
+            coor_rectangle, w_rectangle = region_values
+            mask_rectangle_1 = ((coor_rectangle <= self.v_CoM_sorted[:, self.column_index])
+                                & (self.v_CoM_sorted[:, self.column_index] <= coor_rectangle + w_rectangle))
+            face_indx = self.v_CoM_sorted[mask_rectangle_1, -1].astype(int)
+
         force_direction = np.zeros(3)
         if (force_dir_str == 'top'):
             force_direction[self.column_index + 2] = 1
         elif (force_dir_str == 'bottom'):
             force_direction[self.column_index + 2] = -1
-        face_indx_in_circ = self.v_CoM_sorted[mask_c_circle_1, -1].astype(int)[mask_c_circle_2]
-        mask_normal = np.dot(self.v_NoF[face_indx_in_circ, :], force_direction) > 0
-        return face_indx_in_circ[mask_normal]
+
+        mask_normal = np.dot(self.v_NoF[face_indx, :], force_direction) > 0
+        return face_indx[mask_normal]
 
 
     def add_FEM_mesh_analysis(self, obj):
@@ -211,11 +228,11 @@ class FreeCADWrapper(object):
         self.doc.FemConstraintFixed.References = list(
             zip([obj] * len(self.face_fixed_indx), ['Face' + str(x + 1) for x in self.face_fixed_indx]))
 
-    def add_FEM_constraint_force(self, obj, box_obj, c_circle, r_circle, force_dir_str):
+    def add_FEM_constraint_force(self, obj, box_obj, region_values, force_dir_str):
         self.doc.addObject('Fem::ConstraintForce', 'FemConstraintForce')
         self.doc.Analysis.addObject(self.doc.FemConstraintForce)
 
-        self.face_force_indx = self.get_faces_constraint_force(c_circle, r_circle, force_dir_str)
+        self.face_force_indx = self.get_faces_constraint_force(region_values, force_dir_str)
 
         self.doc.FemConstraintForce.Force = self.force_value
         self.doc.FemConstraintForce.Direction = (box_obj, ['Face6'])
@@ -241,11 +258,11 @@ class FreeCADWrapper(object):
         self.analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
         self.analysis_object.addObject(ObjectsFem.makeSolverCalculixCcxTools(self.doc))
 
-    def analysis_run(self, obj, box_obj, c_circle, r_circle, force_dir_str):
+    def analysis_run(self, obj, box_obj, region_values, force_dir_str):
         self.creating_analysis()
         self.add_FEM_mesh_analysis(obj)
         self.add_FEM_constraint_fixed(obj)
-        self.add_FEM_constraint_force(obj, box_obj, c_circle, r_circle, force_dir_str)
+        self.add_FEM_constraint_force(obj, box_obj, region_values, force_dir_str)
         self.create_FEM_solid()
 
     def calc_analysis(self):
@@ -275,17 +292,17 @@ class FreeCADWrapper(object):
 
         out_mesh = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result_object)
         self.new_mesh = Mesh.Mesh(out_mesh)
-        Mesh.show(self.new_mesh)
-        msh = self.doc.getObject('Mesh')
-        msh.Label = 'Mesh'
-        del msh
+        Mesh.show(self.new_mesh, 'Mesh_{:02d}'.format(self.count_action))
+        # msh = self.doc.getObject('Mesh')
+        # msh.Label = 'Mesh'
+        # del msh
 
-    def save_result(self, save_path):
+    def save_result_step(self, save_path):
         # TODO: add proper save_path and have num_action included in the name
         ###5
         # export one mesh as .ply file
         __objs__ = []
-        __objs__.append(self.doc.getObject('Mesh'))
+        __objs__.append(self.doc.getObject('Mesh_{:02d}'.format(self.count_action)))
 
         save_path = './'
 
@@ -299,14 +316,14 @@ class FreeCADWrapper(object):
 
     def reset_doc(self):
         for obj in self.doc.Objects:
-            if not (obj.Label == 'Mesh' or obj.Label == 'Box'):
+            if not (obj.Label.startswith('Mesh_') or obj.Label == 'Box'):
                 self.doc.removeObject(obj.Name)
-            elif (obj.Label == 'Mesh'):
-                obj.Label = 'Mesh_old'
+            # elif (obj.Label == 'Mesh'):
+            #     obj.Label = 'Mesh_old'
 
     def run(self, c_circle=None, r_circle=None, force_dir_str='top'):
-        while (self.count_action <= self.num_actions):
-
+        while (self.count_action < self.num_actions):
+            self.count_action += 1
             if (self.flag_first_run == 1):
                 self.flag_first_run = 0
             else:
@@ -319,23 +336,31 @@ class FreeCADWrapper(object):
                 c_circle = np.array([40, 7])
                 r_circle = 5
                 force_dir_str = 'top'
+                region_values = (c_circle, r_circle)
 
             if (self.flag_rand_action == 1):
-                c_circle, r_circle, force_dir_str = self.get_random_action()
-            self.analysis_run(self.obj, self.box_obj, c_circle, r_circle, force_dir_str)
+                region_values, force_dir_str = self.get_random_action()
+            self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
             self.doc.recompute()
             self.calc_analysis()
             self.get_result()
 
             if (self.flag_save == 1):
-                self.save_result('./')
-            self.count_action += 1
+                self.save_result_step('./')
+
 
     def get_random_action(self):
-        # TODO: is this optimized? maybe there is a cleaner way?
-        c_circle = np.array([np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
-                             np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
-        r_circle = np.random.uniform(self.EPSILON * 10, abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
+        if (self.action_type == 'circle'):
+            # TODO: is this optimized? maybe there is a cleaner way?
+            c_circle = np.array([np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
+                                 np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
+            r_circle = np.random.uniform(self.EPSILON * 10, abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
+            region_values = (c_circle, r_circle)
+        elif (self.action_type == 'rectangle'):
+            w_rectangle = self.obj_dims[self.column_index] / self.NUM_CS
+            coor_rectangle = np.random.uniform(self.min_vals[self.column_index],
+                                               self.max_vals[self.column_index] - w_rectangle, 1)
+            region_values = (coor_rectangle, w_rectangle)
         force_dir_str = 'top' if np.random.randint(2, size=1) else 'bottom'
-        return c_circle, r_circle, force_dir_str
+        return region_values, force_dir_str
 
