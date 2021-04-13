@@ -1,3 +1,5 @@
 numpy
 gym
 freecad
+pyyaml
+open3d
