@@ -15,18 +15,39 @@ import MeshPart
 import femmesh.femmesh2mesh
 from femtools import ccxtools
 import numpy as np
+import yaml
+import utils_3d
 
 class freecad_env():
-    def __init__(self, path='', force_value=1e3, force_factor=1, num_actions=1, flag_rand_action=0, flag_save=0, action_type='circle'):
-        self.path = path
-        self.force_value = force_value
-        self.force_factor = force_factor
-        self.num_actions = num_actions
-        self.count_action = 0
-        self.flag_rand_action = flag_rand_action
+    def __init__(self, **kwargs):
+        env_config_path = './env_config.yaml'
+        with open(env_config_path, 'r') as f:
+            cfg = yaml.safe_load(f)
+        allowed_keys = {
+            'path',
+            'force_value',
+            'force_factor',
+            'num_actions',
+            'flag_rand_action',
+            'flag_save',
+            'action_type',
+            'max_triangles'
+        }
+
+        self.path = cfg['path']['load_path']
+        self.force_value = cfg['force_params']['force_value']
+        self.force_factor = cfg['force_params']['force_factor']
+        self.num_actions = cfg['num_actions']
+        self.flag_rand_action = cfg['flags']['flag_rand_action']
+        self.flag_save = cfg['flags']['flag_save']
+        self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
+        self.max_triangles = cfg['max_triangles']
+
+        self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
+        print('Number of actions: ', self.num_actions)
         self.flag_first_run = 1
-        self.flag_save = flag_save
-        self.action_type = action_type # 'circle' or 'rectangle'
+        self.count_action = 0
+
         # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
         # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
@@ -182,12 +203,6 @@ class freecad_env():
 
         elif (self.action_type == 'rectangle'):
             coor_rectangle, w_rectangle = region_values
-            print(region_values)
-            print(coor_rectangle)
-            print('HERE:', np.shape(coor_rectangle))
-            print('HERE2:', np.shape(self.v_CoM_sorted[:, self.column_index]))
-            print('HERE3:', np.shape(self.v_CoM_sorted[:, self.column_index] >= coor_rectangle))
-
             mask_rectangle_1 = ((coor_rectangle <= self.v_CoM_sorted[:, self.column_index])
                                 & (self.v_CoM_sorted[:, self.column_index] <= coor_rectangle + w_rectangle))
             face_indx = self.v_CoM_sorted[mask_rectangle_1, -1].astype(int)
@@ -281,10 +296,26 @@ class freecad_env():
 
         out_mesh = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result_object)
         self.new_mesh = Mesh.Mesh(out_mesh)
+        if (len(self.new_mesh.Facets) >= 1.1 * self.max_triangles):
+            self.new_mesh = self.mesh_decimation(self.new_mesh)
         Mesh.show(self.new_mesh, 'Mesh_{:02d}'.format(self.count_action))
         # msh = self.doc.getObject('Mesh')
         # msh.Label = 'Mesh'
         # del msh
+    def create_mesh(self, mesh):
+        vertices = np.array([p.Vector for p in mesh.Points])
+        faces = np.array([f.PointIndices for f in mesh.Facets])
+        mesh_new = utils_3d.create_mesh_open3d(vertices, faces)
+        return mesh_new
+
+    def mesh_decimation(self, mesh):
+        mesh_new = self.create_mesh(mesh)
+        mesh_new = utils_3d.mesh_decimation_open3d(mesh_new, max_triangles=self.max_triangles)
+        return self.create_mesh_obj(mesh_new)
+
+    def create_mesh_obj(self, mesh):
+        triangles = utils_3d.get_mesh_info_open3d(mesh)
+        return Mesh.Mesh(triangles)
 
     def save_result_step(self, save_path):
         # TODO: add proper save_path and have num_action included in the name
@@ -312,6 +343,7 @@ class freecad_env():
 
     def run(self, c_circle=None, r_circle=None, force_dir_str='top'):
         while (self.count_action < self.num_actions):
+            print('here!')
             self.count_action += 1
             if (self.flag_first_run == 1):
                 self.flag_first_run = 0
@@ -355,7 +387,7 @@ class freecad_env():
 
 if __name__ == '__main__':
     PATH = './fc1_Face109_Plus901000.ply'
-    fc_env = freecad_env(force_value=1e4, num_actions=2, action_type='rectangle', flag_rand_action=1)
+    fc_env = freecad_env(force_value=1e4, num_actions=5, action_type='rectangle', flag_rand_action=1)
     fc_env.flag_save = 1
     fc_env.run()
     fc_env.save_result_step('./')

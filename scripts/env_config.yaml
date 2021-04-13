@@ -1,0 +1,16 @@
+path:
+  load_path: ''
+  save_path: ''
+
+force_params:
+  force_value: 1e3
+  force_factor: 1
+
+num_actions: 1
+
+flags:
+  flag_rand_action: 0
+  flag_save: 0
+  action_type: 'circle'
+
+max_triangles: 500

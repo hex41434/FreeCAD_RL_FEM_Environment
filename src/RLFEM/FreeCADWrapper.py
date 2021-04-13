@@ -22,6 +22,8 @@ except:
     print("FreeCAD is not installed, skipping for now.")
 
 import numpy as np
+import yaml
+import utils_3d
 
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
@@ -29,21 +31,39 @@ class FreeCADWrapper(object):
     TODO: more description
     """
 
-    def __init__(self, path='', force_value=1e3, force_factor=1, num_actions=1, flag_rand_action=0, flag_save=0, action_type='circle'):
+    def __init__(self, **kwargs):
         """
         Args:
             path: path to the .ply file.
         """
-    
-        self.path = path
-        self.force_value = force_value
-        self.force_factor = force_factor
-        self.num_actions = num_actions
-        self.count_action = 0
-        self.flag_rand_action = flag_rand_action
+        env_config_path = './env_config.yaml'
+        with open(env_config_path, 'r') as f:
+            cfg = yaml.safe_load(f)
+        allowed_keys = {
+            'path',
+            'force_value',
+            'force_factor',
+            'num_actions',
+            'flag_rand_action',
+            'flag_save',
+            'action_type',
+            'max_triangles'
+        }
+
+        self.path = cfg['path']['load_path']
+        self.force_value = cfg['force_params']['force_value']
+        self.force_factor = cfg['force_params']['force_factor']
+        self.num_actions = cfg['num_actions']
+        self.flag_rand_action = cfg['flags']['flag_rand_action']
+        self.flag_save = cfg['flags']['flag_save']
+        self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
+        self.max_triangles = cfg['max_triangles']
+
+        self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
+
         self.flag_first_run = 1
-        self.flag_save = flag_save
-        self.action_type = action_type # 'circle' or 'rectangle'
+        self.count_action = 0
+
         # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
         # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
@@ -72,6 +92,7 @@ class FreeCADWrapper(object):
             self.obj = self.doc.Objects[-1]
             # if (self.flag_first_run == 0):
             #     self.doc.removeObject(self.doc.getObject('Mesh'))
+
     def calc_obj_info(self):
         self.v_CoM, self.v_NoF = self.extract_info_mesh(self.obj)
 
@@ -84,7 +105,7 @@ class FreeCADWrapper(object):
 
         # TODO: arbitrary numbers, give as parameters
         self.NUM_BIN = 1000
-        self.NUM_CS = 20 # number of cross-sections, in case of rectangular actions space
+        self.NUM_CS = 20  # number of cross-sections, in case of rectangular actions space
 
         self.flag_elong = 'length'
         self.calc_epsilon()
@@ -101,7 +122,6 @@ class FreeCADWrapper(object):
         elif (self.flag_elong == 'height'):
             self.EPSILON = self.HEIGHT / self.NUM_BIN
             self.column_index = 2
-
 
     def insert_mesh(self):
         Mesh.insert(self.path)
@@ -139,7 +159,6 @@ class FreeCADWrapper(object):
         del __s__
         return solid_obj
 
-
     def convert2solidmesh(self):
         shape_obj = self.doc.addObject('Part::Feature', self.obj.Name)
         __shape__ = Part.Shape()
@@ -150,7 +169,6 @@ class FreeCADWrapper(object):
         # obj.ViewObject.Visibility = False
         # shape_obj.ViewObject.Visibility = False
         del shape_obj, __shape__, solid_obj
-
 
     def extract_info_mesh(self, obj):
         faces = obj.Shape.Faces.copy()
@@ -178,13 +196,17 @@ class FreeCADWrapper(object):
         mask_normal_1 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_1, -1].astype(int), :], -normal_vector) > 0.95
         mask_normal_2 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_2, -1].astype(int), :], normal_vector) > 0.95
         face_fixed_indx = np.concatenate(
-            (self.v_CoM_sorted[mask_2, -1].astype(int)[mask_normal_2], self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
+            (self.v_CoM_sorted[mask_2, -1].astype(int)[mask_normal_2],
+             self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
         return face_fixed_indx
 
     def check_valid_circle(self, c_circle, r_circle):
-        mask_c_circle = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
-        if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(axis=0)) & (
-                c_circle[self.column_index + 1] <= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].max(axis=0))):
+        mask_c_circle = (
+                    abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
+        if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(
+                axis=0)) & (
+                        c_circle[self.column_index + 1] <= self.v_CoM_sorted[
+                    mask_c_circle, self.column_index + 1].max(axis=0))):
             print('center of circle does not lie on the mesh')
             # TODO: CHECK radius as well!
 
@@ -192,9 +214,11 @@ class FreeCADWrapper(object):
         face_indx = []
         if self.action_type == 'circle':
             c_circle, r_circle = region_values
-            mask_c_circle_1 = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
-            mask_c_circle_2 = np.linalg.norm(self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
-                                             axis=1) <= r_circle
+            mask_c_circle_1 = (
+                        abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
+            mask_c_circle_2 = np.linalg.norm(
+                self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
+                axis=1) <= r_circle
             face_indx = self.v_CoM_sorted[mask_c_circle_1, -1].astype(int)[mask_c_circle_2]
 
         elif (self.action_type == 'rectangle'):
@@ -212,13 +236,11 @@ class FreeCADWrapper(object):
         mask_normal = np.dot(self.v_NoF[face_indx, :], force_direction) > 0
         return face_indx[mask_normal]
 
-
     def add_FEM_mesh_analysis(self, obj):
         femmesh_obj = self.doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
         femmesh_obj.Shape = obj
         femmesh_obj.MaxSize = 1
         self.doc.Analysis.addObject(femmesh_obj)
-
 
     def add_FEM_constraint_fixed(self, obj):
         self.doc.addObject('Fem::ConstraintFixed', 'FemConstraintFixed')
@@ -237,10 +259,9 @@ class FreeCADWrapper(object):
         self.doc.FemConstraintForce.Force = self.force_value
         self.doc.FemConstraintForce.Direction = (box_obj, ['Face6'])
         self.doc.FemConstraintForce.Reversed = True if force_dir_str == 'top' else False
-        self.doc.FemConstraintForce.Scale = self.force_factor # TODO: this doesn't work, find a better way
+        self.doc.FemConstraintForce.Scale = self.force_factor  # TODO: this doesn't work, find a better way
         self.doc.FemConstraintForce.References = list(
             zip([obj] * len(self.face_force_indx), ['Face' + str(x + 1) for x in self.face_force_indx]))
-
 
     def create_FEM_solid(self):
         self.material_object = ObjectsFem.makeMaterialSolid(self.doc, 'SolidMaterial')
@@ -252,7 +273,6 @@ class FreeCADWrapper(object):
         self.material_object.Material = mat
         # FemGui.getActiveAnalysis().addObject(material_object)
         self.doc.Analysis.addObject(self.material_object)
-
 
     def creating_analysis(self):
         self.analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
@@ -292,10 +312,27 @@ class FreeCADWrapper(object):
 
         out_mesh = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result_object)
         self.new_mesh = Mesh.Mesh(out_mesh)
+        if (len(self.new_mesh.Facets) >= 1.1 * self.max_triangles):
+            self.new_mesh = self.mesh_decimation(self.new_mesh)
         Mesh.show(self.new_mesh, 'Mesh_{:02d}'.format(self.count_action))
         # msh = self.doc.getObject('Mesh')
         # msh.Label = 'Mesh'
         # del msh
+
+    def create_mesh(self, mesh):
+        vertices = np.array([p.Vector for p in mesh.Points])
+        faces = np.array([f.PointIndices for f in mesh.Facets])
+        mesh_new = utils_3d.create_mesh_open3d(vertices, faces)
+        return mesh_new
+
+    def mesh_decimation(self, mesh):
+        mesh_new = self.create_mesh(mesh)
+        mesh_new = utils_3d.mesh_decimation_open3d(mesh_new, max_triangles=self.max_triangles)
+        return self.create_mesh_obj(mesh_new)
+
+    def create_mesh_obj(self, mesh):
+        triangles = utils_3d.get_mesh_info_open3d(mesh)
+        return Mesh.Mesh(triangles)
 
     def save_result_step(self, save_path):
         # TODO: add proper save_path and have num_action included in the name
@@ -348,13 +385,15 @@ class FreeCADWrapper(object):
             if (self.flag_save == 1):
                 self.save_result_step('./')
 
-
     def get_random_action(self):
         if (self.action_type == 'circle'):
             # TODO: is this optimized? maybe there is a cleaner way?
-            c_circle = np.array([np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
-                                 np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
-            r_circle = np.random.uniform(self.EPSILON * 10, abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
+            c_circle = np.array(
+                [np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
+                 np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
+            r_circle = np.random.uniform(self.EPSILON * 10,
+                                         abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]),
+                                         1)
             region_values = (c_circle, r_circle)
         elif (self.action_type == 'rectangle'):
             w_rectangle = self.obj_dims[self.column_index] / self.NUM_CS

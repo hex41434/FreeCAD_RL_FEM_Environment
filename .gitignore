@@ -131,3 +131,5 @@ dmypy.json
 # generated files
 *.ply
 *.stl
+*.obj
+*.off
