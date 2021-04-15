@@ -16,7 +16,10 @@ import femmesh.femmesh2mesh
 from femtools import ccxtools
 import numpy as np
 import yaml
+import pickle
 import utils_3d
+
+App = FreeCAD
 
 class freecad_env():
     def __init__(self, **kwargs):
@@ -43,15 +46,28 @@ class freecad_env():
         self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
         self.max_triangles = cfg['max_triangles']
 
-        self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
-        print('Number of actions: ', self.num_actions)
-        self.flag_first_run = 1
-        self.count_action = 0
+        self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
         # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
         # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
         self.doc = App.newDocument('doc')
+
+        self.initialize_doc()
+
+    def clear_doc(self):
+        for obj in self.doc.Objects:
+                self.doc.removeObject(obj.Name)
+
+    def initialize_doc(self):
+        self.flag_first_run = 1
+        self.count_action = 0
+
+        self.flag_success = 1
+        self.flag_break = 0
+
+        self.region_values_vec = []
+        self.force_dir_str_vec = []
 
         if not (self.path == ''):
             self.insert_mesh()
@@ -61,7 +77,6 @@ class freecad_env():
 
         self.initialize_obj()
         self.calc_obj_info()
-
         self.box_obj = self.doc.addObject('Part::Box', 'Box')
         # box_obj.ViewObject.Visibility = False
 
@@ -185,12 +200,20 @@ class freecad_env():
             (self.v_CoM_sorted[mask_2, -1].astype(int)[mask_normal_2], self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
         return face_fixed_indx
 
-    def check_valid_circle(self, c_circle, r_circle):
-        mask_c_circle = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
-        if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(axis=0)) & (
-                c_circle[self.column_index + 1] <= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].max(axis=0))):
-            print('center of circle does not lie on the mesh')
-            # TODO: CHECK radius as well!
+    def check_valid_region(self, region_values):
+        flag_valid = 1
+        if (self.action_type == 'circle'):
+            c_circle, r_circle = region_values
+            mask_c_circle = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
+            if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(axis=0)) & (
+                    c_circle[self.column_index + 1] <= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].max(axis=0))):
+                print('center of circle does not lie on the mesh')
+                # TODO: CHECK radius as well!
+                flag_valid = 0
+
+        elif (self.action_type == 'rectangle'):
+            coor_rectangle, w_rectangle = region_values
+        return flag_valid
 
     def get_faces_constraint_force(self, region_values, force_dir_str):
         face_indx = []
@@ -270,6 +293,7 @@ class freecad_env():
         self.create_FEM_solid()
 
     def calc_analysis(self):
+        self.flag_success = 0
         fea = ccxtools.FemToolsCcx()
         fea.update_objects()
         fea.setup_working_dir()
@@ -283,6 +307,7 @@ class freecad_env():
             # fea.inp_file_name = '/tmp/FEMWB/FEMMeshGmsh.inp'
             fea.ccx_run()
             fea.load_results()
+            self.flag_success = 1
         else:
             FreeCAD.Console.PrintError('Oh, we have a problem! {}\n'.format(message))  # in report view
             print('Oh, we have a problem! {}\n'.format(message))  # in python console
@@ -327,48 +352,84 @@ class freecad_env():
         save_path = './'
 
         filename = save_path + 'result_' + str(self.count_action) + '.ply'
-        print(__objs__)
 
         # Mesh.export(__objs__,u'wowply.ply')
         Mesh.export(__objs__, filename)
 
         del __objs__
 
-    def reset_doc(self):
+    def save_result_all(self, save_path):
+
+        for i in range(self.num_actions):
+            obj = [self.doc.getObject('Mesh_{:02d}'.format(i + 1))]
+            filename = save_path + 'result_' + str(i + 1) + '.ply'
+            Mesh.export(obj, filename)
+            del obj
+
+
+    def save_result_info(self, save_path, pickle_obj):
+        with open(save_path + '.pickle', 'wb') as handle:
+            pickle.dump(pickle_obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def reset_doc_action(self):
         for obj in self.doc.Objects:
             if not (obj.Label.startswith('Mesh_') or obj.Label == 'Box'):
                 self.doc.removeObject(obj.Name)
             # elif (obj.Label == 'Mesh'):
             #     obj.Label = 'Mesh_old'
 
-    def run(self, c_circle=None, r_circle=None, force_dir_str='top'):
+    def run_loop(self, region_values=None, force_dir_str='top'):
         while (self.count_action < self.num_actions):
-            print('here!')
             self.count_action += 1
             if (self.flag_first_run == 1):
                 self.flag_first_run = 0
             else:
-                self.reset_doc()
+                self.reset_doc_action()
                 self.initialize_obj()
                 self.calc_obj_info()
 
-            if (self.flag_rand_action == 0) and ((c_circle is None) | (r_circle is None)):
-                # c_circle = np.array([15, 7])
-                c_circle = np.array([40, 7])
-                r_circle = 5
-                force_dir_str = 'top'
-                region_values = (c_circle, r_circle)
+            if (self.flag_rand_action == 0) and (region_values is None):
+                if (self.action_type == 'circle'):
+                    # c_circle = np.array([15, 7])
+                    c_circle = np.array([40, 7])
+                    r_circle = 5
+                    force_dir_str = 'top'
+                    region_values = (c_circle, r_circle)
+                elif (self.action_type == 'rectangle') and (region_values is None):
+                    coor_rectangle = np.array([25])
+                    w_rectangle = 7
+                    force_dir_str = 'top'
+                    region_values = (coor_rectangle, w_rectangle)
 
             if (self.flag_rand_action == 1):
                 region_values, force_dir_str = self.get_random_action()
             self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
             self.doc.recompute()
             self.calc_analysis()
-            self.get_result()
+            if (self.flag_success == 1):
+                self.get_result()
+                if (self.flag_save == 1):
+                    self.save_result_step('./')
 
-            if (self.flag_save == 1):
-                self.save_result_step('./')
+                self.region_values_vec.append(region_values)
+                self.force_dir_str_vec.append(force_dir_str)
+            else:
+                self.flag_break = 1
+                break
 
+        if (self.flag_save == 1):
+            pickle_dict = self.create_pickle_dict()
+            self.save_result_info('./pickle_meta_data', pickle_dict)
+        return self.flag_break
+
+    def create_pickle_dict(self):
+        pickle_dict = {'region_values': self.region_values_vec,
+                       'force_dir_str': self.force_dir_str_vec,
+                       'episode_length': self.num_actions,
+                       'action_type': self.action_type,
+                       'force_value': self.force_value,
+                       'force_factor': self.force_factor}
+        return pickle_dict
 
     def get_random_action(self):
         if (self.action_type == 'circle'):
@@ -385,9 +446,77 @@ class freecad_env():
         force_dir_str = 'top' if np.random.randint(2, size=1) else 'bottom'
         return region_values, force_dir_str
 
+    def run_step(self, region_values=None, force_dir_str='top'):
+        self.count_action += 1
+        if (self.flag_first_run == 1):
+            self.flag_first_run = 0
+        else:
+            self.reset_doc_action()
+            self.initialize_obj()
+            self.calc_obj_info()
+
+        flag_valid = 0
+        if (region_values == None):
+            region_values, force_dir_str = self.get_random_action()
+        else:
+            # TODO: fix the validity check.
+            # flag_valid = self.check_valid_region()
+            flag_valid = 1
+
+        if (flag_valid == 1):
+            self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
+            self.doc.recompute()
+            self.calc_analysis()
+            if (self.flag_success == 1):
+                self.get_result()
+
+                self.region_values_vec.append(region_values)
+                self.force_dir_str_vec.append(force_dir_str)
+            else:
+                self.flag_break = 1
+
+        else:
+            print('invalid action!')
+
+        return self.flag_break
+
 if __name__ == '__main__':
-    PATH = './fc1_Face109_Plus901000.ply'
-    fc_env = freecad_env(force_value=1e4, num_actions=5, action_type='rectangle', flag_rand_action=1)
+    # PATH = './fc1_Face109_Plus901000.ply'
+    # fc_env = freecad_env(PATH)
+    # fc_env.flag_save = 1
+    # fc_env.run()
+    # fc_env.save_result_step('./')
+    PATH = ''
+    fc_env = freecad_env(force_value=1e4, num_actions=5, action_type='rectangle', flag_rand_action=0)
     fc_env.flag_save = 1
-    fc_env.run()
-    fc_env.save_result_step('./')
+    num_samples = 4 # number of episodes
+    count = 0
+    max_repeat_crash = 5
+    save_path = './results/samples_'
+    while count < num_samples:
+        region_values_vec = []
+        force_dir_str_vec = []
+        crash_couter = 0
+        while (fc_env.count_action < fc_env.num_actions):
+
+            if (len(region_values_vec) > fc_env.count_action):
+                region_values = region_values_vec[fc_env.count_action]
+                force_dir_str = force_dir_str_vec[fc_env.count_action]
+            else:
+                region_values, force_dir_str = fc_env.get_random_action()
+                region_values_vec.append(region_values)
+                force_dir_str_vec.append(force_dir_str)
+            flag_break = fc_env.run_step(region_values=region_values, force_dir_str=force_dir_str)
+
+            if (flag_break == 1) and (crash_couter < max_repeat_crash):
+                fc_env.clear_doc()
+                fc_env.initialize_doc()
+                crash_couter += 1
+            elif (crash_couter >= max_repeat_crash):
+                break
+
+        if (fc_env.flag_save == 1) and (fc_env.count_action == fc_env.num_actions):
+            pickle_dict = fc_env.create_pickle_dict()
+            fc_env.save_result_info(save_path + 'pickle_meta_data_{:03d}'.format(count), pickle_dict)
+            fc_env.save_result_all(save_path + '{:03d}'.format(count))
+            count += 1

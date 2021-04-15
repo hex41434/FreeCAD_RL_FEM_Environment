@@ -13,4 +13,4 @@ flags:
   flag_save: 0
   action_type: 'circle'
 
-max_triangles: 500
+max_triangles: 1000

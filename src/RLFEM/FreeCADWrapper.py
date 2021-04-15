@@ -25,6 +25,9 @@ import numpy as np
 import yaml
 import utils_3d
 
+# TODO: this apparently solves the problem of not running the App.newDocument() method
+App = FreeCAD 
+
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
 
