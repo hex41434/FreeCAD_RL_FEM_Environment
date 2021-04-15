@@ -62,15 +62,28 @@ class FreeCADWrapper(object):
         self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
         self.max_triangles = cfg['max_triangles']
 
-        self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
-
-        self.flag_first_run = 1
-        self.count_action = 0
+        self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
         # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
         # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
         self.doc = App.newDocument('doc')
+
+        self.initialize_doc()
+
+    def clear_doc(self):
+        for obj in self.doc.Objects:
+            self.doc.removeObject(obj.Name)
+
+    def initialize_doc(self):
+        self.flag_first_run = 1
+        self.count_action = 0
+
+        self.flag_success = 1
+        self.flag_break = 0
+
+        self.region_values_vec = []
+        self.force_dir_str_vec = []
 
         if not (self.path == ''):
             self.insert_mesh()
@@ -80,7 +93,6 @@ class FreeCADWrapper(object):
 
         self.initialize_obj()
         self.calc_obj_info()
-
         self.box_obj = self.doc.addObject('Part::Box', 'Box')
         # box_obj.ViewObject.Visibility = False
 
@@ -203,22 +215,29 @@ class FreeCADWrapper(object):
              self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
         return face_fixed_indx
 
-    def check_valid_circle(self, c_circle, r_circle):
-        mask_c_circle = (
-                    abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
-        if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(
-                axis=0)) & (
-                        c_circle[self.column_index + 1] <= self.v_CoM_sorted[
-                    mask_c_circle, self.column_index + 1].max(axis=0))):
-            print('center of circle does not lie on the mesh')
-            # TODO: CHECK radius as well!
+    def check_valid_region(self, region_values):
+        flag_valid = 1
+        if (self.action_type == 'circle'):
+            c_circle, r_circle = region_values
+            mask_c_circle = (
+                        abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
+            if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(
+                    axis=0)) & (
+                            c_circle[self.column_index + 1] <= self.v_CoM_sorted[
+                        mask_c_circle, self.column_index + 1].max(axis=0))):
+                print('center of circle does not lie on the mesh')
+                # TODO: CHECK radius as well!
+                flag_valid = 0
+
+        elif (self.action_type == 'rectangle'):
+            coor_rectangle, w_rectangle = region_values
+        return flag_valid
 
     def get_faces_constraint_force(self, region_values, force_dir_str):
         face_indx = []
         if self.action_type == 'circle':
             c_circle, r_circle = region_values
-            mask_c_circle_1 = (
-                        abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
+            mask_c_circle_1 = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
             mask_c_circle_2 = np.linalg.norm(
                 self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
                 axis=1) <= r_circle
@@ -289,6 +308,7 @@ class FreeCADWrapper(object):
         self.create_FEM_solid()
 
     def calc_analysis(self):
+        self.flag_success = 0
         fea = ccxtools.FemToolsCcx()
         fea.update_objects()
         fea.setup_working_dir()
@@ -302,6 +322,7 @@ class FreeCADWrapper(object):
             # fea.inp_file_name = '/tmp/FEMWB/FEMMeshGmsh.inp'
             fea.ccx_run()
             fea.load_results()
+            self.flag_success = 1
         else:
             FreeCAD.Console.PrintError('Oh, we have a problem! {}\n'.format(message))  # in report view
             print('Oh, we have a problem! {}\n'.format(message))  # in python console
@@ -347,46 +368,83 @@ class FreeCADWrapper(object):
         save_path = './'
 
         filename = save_path + 'result_' + str(self.count_action) + '.ply'
-        print(__objs__)
 
         # Mesh.export(__objs__,u'wowply.ply')
         Mesh.export(__objs__, filename)
 
         del __objs__
 
-    def reset_doc(self):
+    def save_result_all(self, save_path):
+
+        for i in range(self.num_actions):
+            obj = [self.doc.getObject('Mesh_{:02d}'.format(i + 1))]
+            filename = save_path + 'result_' + str(i + 1) + '.ply'
+            Mesh.export(obj, filename)
+            del obj
+
+    def save_result_info(self, save_path, pickle_obj):
+        with open(save_path + '.pickle', 'wb') as handle:
+            pickle.dump(pickle_obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def reset_doc_action(self):
         for obj in self.doc.Objects:
             if not (obj.Label.startswith('Mesh_') or obj.Label == 'Box'):
                 self.doc.removeObject(obj.Name)
             # elif (obj.Label == 'Mesh'):
             #     obj.Label = 'Mesh_old'
 
-    def run(self, c_circle=None, r_circle=None, force_dir_str='top'):
+    def run_loop(self, region_values=None, force_dir_str='top'):
         while (self.count_action < self.num_actions):
             self.count_action += 1
             if (self.flag_first_run == 1):
                 self.flag_first_run = 0
             else:
-                self.reset_doc()
+                self.reset_doc_action()
                 self.initialize_obj()
                 self.calc_obj_info()
 
-            if (self.flag_rand_action == 0) and ((c_circle is None) | (r_circle is None)):
-                # c_circle = np.array([15, 7])
-                c_circle = np.array([40, 7])
-                r_circle = 5
-                force_dir_str = 'top'
-                region_values = (c_circle, r_circle)
+            if (self.flag_rand_action == 0) and (region_values is None):
+                if (self.action_type == 'circle'):
+                    # c_circle = np.array([15, 7])
+                    c_circle = np.array([40, 7])
+                    r_circle = 5
+                    force_dir_str = 'top'
+                    region_values = (c_circle, r_circle)
+                elif (self.action_type == 'rectangle') and (region_values is None):
+                    coor_rectangle = np.array([25])
+                    w_rectangle = 7
+                    force_dir_str = 'top'
+                    region_values = (coor_rectangle, w_rectangle)
 
             if (self.flag_rand_action == 1):
                 region_values, force_dir_str = self.get_random_action()
             self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
             self.doc.recompute()
             self.calc_analysis()
-            self.get_result()
+            if (self.flag_success == 1):
+                self.get_result()
+                if (self.flag_save == 1):
+                    self.save_result_step('./')
 
-            if (self.flag_save == 1):
-                self.save_result_step('./')
+                self.region_values_vec.append(region_values)
+                self.force_dir_str_vec.append(force_dir_str)
+            else:
+                self.flag_break = 1
+                break
+
+        if (self.flag_save == 1):
+            pickle_dict = self.create_pickle_dict()
+            self.save_result_info('./pickle_meta_data', pickle_dict)
+        return self.flag_break
+
+    def create_pickle_dict(self):
+        pickle_dict = {'region_values': self.region_values_vec,
+                       'force_dir_str': self.force_dir_str_vec,
+                       'episode_length': self.num_actions,
+                       'action_type': self.action_type,
+                       'force_value': self.force_value,
+                       'force_factor': self.force_factor}
+        return pickle_dict
 
     def get_random_action(self):
         if (self.action_type == 'circle'):
@@ -395,8 +453,7 @@ class FreeCADWrapper(object):
                 [np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
                  np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
             r_circle = np.random.uniform(self.EPSILON * 10,
-                                         abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]),
-                                         1)
+                                         abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
             region_values = (c_circle, r_circle)
         elif (self.action_type == 'rectangle'):
             w_rectangle = self.obj_dims[self.column_index] / self.NUM_CS
@@ -405,4 +462,38 @@ class FreeCADWrapper(object):
             region_values = (coor_rectangle, w_rectangle)
         force_dir_str = 'top' if np.random.randint(2, size=1) else 'bottom'
         return region_values, force_dir_str
+
+    def run_step(self, region_values=None, force_dir_str='top'):
+        self.count_action += 1
+        if (self.flag_first_run == 1):
+            self.flag_first_run = 0
+        else:
+            self.reset_doc_action()
+            self.initialize_obj()
+            self.calc_obj_info()
+
+        flag_valid = 0
+        if (region_values == None):
+            region_values, force_dir_str = self.get_random_action()
+        else:
+            # TODO: fix the validity check.
+            # flag_valid = self.check_valid_region()
+            flag_valid = 1
+
+        if (flag_valid == 1):
+            self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
+            self.doc.recompute()
+            self.calc_analysis()
+            if (self.flag_success == 1):
+                self.get_result()
+
+                self.region_values_vec.append(region_values)
+                self.force_dir_str_vec.append(force_dir_str)
+            else:
+                self.flag_break = 1
+
+        else:
+            print('invalid action!')
+
+        return self.flag_break
 
