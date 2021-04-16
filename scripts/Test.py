@@ -1,6 +1,6 @@
 from RLFEM import RLFEM
 
-path = './fc1_Face109_Plus901000.ply'
+path = ''
 
 fc_env = RLFEM(path=path)
 

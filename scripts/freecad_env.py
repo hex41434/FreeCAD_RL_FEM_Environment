@@ -19,7 +19,6 @@ import yaml
 import pickle
 import utils_3d
 
-App = FreeCAD
 
 class freecad_env():
     def __init__(self, **kwargs):
@@ -51,7 +50,7 @@ class freecad_env():
         # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
         # TODO: add the number of actions (sequence) and repeat until it's satisfied
         # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
-        self.doc = App.newDocument('doc')
+        self.doc = FreeCAD.newDocument('doc')
 
         self.initialize_doc()
 
