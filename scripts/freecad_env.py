@@ -33,7 +33,13 @@ class freecad_env():
             'flag_rand_action',
             'flag_save',
             'action_type',
-            'max_triangles'
+            'max_triangles',
+            'flag_elong',
+            'num_bins',
+            'num_cs',
+            'obj_dim_h',
+            'obj_dim_w',
+            'obj_dim_l'
         }
 
         self.path = cfg['path']['load_path']
@@ -44,6 +50,12 @@ class freecad_env():
         self.flag_save = cfg['flags']['flag_save']
         self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
         self.max_triangles = cfg['max_triangles']
+        self.flag_elong = cfg['flags']['flag_elong']
+        self.NUM_BIN = cfg['num_bins']
+        self.NUM_CS = cfg['num_cs']  # number of cross-sections, in case of rectangular actions space
+        self.obj_dim_h = cfg['obj_dim']['height']
+        self.obj_dim_w = cfg['obj_dim']['width']
+        self.obj_dim_l = cfg['obj_dim']['length']
 
         self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
@@ -56,7 +68,7 @@ class freecad_env():
 
     def clear_doc(self):
         for obj in self.doc.Objects:
-                self.doc.removeObject(obj.Name)
+            self.doc.removeObject(obj.Name)
 
     def initialize_doc(self):
         self.flag_first_run = 1
@@ -90,6 +102,7 @@ class freecad_env():
             self.obj = self.doc.Objects[-1]
             # if (self.flag_first_run == 0):
             #     self.doc.removeObject(self.doc.getObject('Mesh'))
+
     def calc_obj_info(self):
         self.v_CoM, self.v_NoF = self.extract_info_mesh(self.obj)
 
@@ -100,11 +113,6 @@ class freecad_env():
         self.WIDTH = self.obj_dims[1]  # y direction
         self.HEIGHT = self.obj_dims[2]  # z direction
 
-        # TODO: arbitrary numbers, give as parameters
-        self.NUM_BIN = 1000
-        self.NUM_CS = 20 # number of cross-sections, in case of rectangular actions space
-
-        self.flag_elong = 'length'
         self.calc_epsilon()
 
         self.v_CoM_sorted = self.get_sorted_CoM(self.v_CoM, self.column_index)
@@ -120,15 +128,14 @@ class freecad_env():
             self.EPSILON = self.HEIGHT / self.NUM_BIN
             self.column_index = 2
 
-
     def insert_mesh(self):
         Mesh.insert(self.path)
 
     def create_initial_cube(self):
         obj = self.doc.addObject('Part::Box', 'Box')
-        obj.Height = 2
-        obj.Width = 5
-        obj.Length = 50
+        obj.Height = self.obj_dim_h
+        obj.Width = self.obj_dim_w
+        obj.Length = self.obj_dim_l
         msh = self.doc.addObject('Mesh::Feature', 'Cube_Mesh')
         __part__ = obj
         __shape__ = __part__.Shape.copy(False)
@@ -150,13 +157,12 @@ class freecad_env():
         __s__ = shape_obj.Shape
         __s__ = Part.Solid(__s__)
         solid_obj = self.doc.addObject('Part::Feature', shape_obj.Name + '_solid')
-        solid_obj.Label = shape_obj.Name + ' (Solid)'
+        solid_obj.Label = shape_obj.Name + '_solid'
         solid_obj.Shape = __s__
         if (not (self.path == '')) or (self.flag_first_run == 0):
             solid_obj.Shape = solid_obj.Shape.removeSplitter()
         del __s__
         return solid_obj
-
 
     def convert2solidmesh(self):
         shape_obj = self.doc.addObject('Part::Feature', self.obj.Name)
@@ -168,7 +174,6 @@ class freecad_env():
         # obj.ViewObject.Visibility = False
         # shape_obj.ViewObject.Visibility = False
         del shape_obj, __shape__, solid_obj
-
 
     def extract_info_mesh(self, obj):
         faces = obj.Shape.Faces.copy()
@@ -196,16 +201,20 @@ class freecad_env():
         mask_normal_1 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_1, -1].astype(int), :], -normal_vector) > 0.95
         mask_normal_2 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_2, -1].astype(int), :], normal_vector) > 0.95
         face_fixed_indx = np.concatenate(
-            (self.v_CoM_sorted[mask_2, -1].astype(int)[mask_normal_2], self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
+            (self.v_CoM_sorted[mask_2, -1].astype(int)[mask_normal_2],
+             self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
         return face_fixed_indx
 
     def check_valid_region(self, region_values):
         flag_valid = 1
         if (self.action_type == 'circle'):
             c_circle, r_circle = region_values
-            mask_c_circle = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
-            if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(axis=0)) & (
-                    c_circle[self.column_index + 1] <= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].max(axis=0))):
+            mask_c_circle = (
+                    abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
+            if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(
+                    axis=0)) & (
+                            c_circle[self.column_index + 1] <= self.v_CoM_sorted[
+                        mask_c_circle, self.column_index + 1].max(axis=0))):
                 print('center of circle does not lie on the mesh')
                 # TODO: CHECK radius as well!
                 flag_valid = 0
@@ -219,8 +228,9 @@ class freecad_env():
         if self.action_type == 'circle':
             c_circle, r_circle = region_values
             mask_c_circle_1 = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
-            mask_c_circle_2 = np.linalg.norm(self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
-                                             axis=1) <= r_circle
+            mask_c_circle_2 = np.linalg.norm(
+                self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
+                axis=1) <= r_circle
             face_indx = self.v_CoM_sorted[mask_c_circle_1, -1].astype(int)[mask_c_circle_2]
 
         elif (self.action_type == 'rectangle'):
@@ -238,13 +248,11 @@ class freecad_env():
         mask_normal = np.dot(self.v_NoF[face_indx, :], force_direction) > 0
         return face_indx[mask_normal]
 
-
     def add_FEM_mesh_analysis(self, obj):
         femmesh_obj = self.doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
         femmesh_obj.Shape = obj
         femmesh_obj.MaxSize = 1
         self.doc.Analysis.addObject(femmesh_obj)
-
 
     def add_FEM_constraint_fixed(self, obj):
         self.doc.addObject('Fem::ConstraintFixed', 'FemConstraintFixed')
@@ -263,10 +271,9 @@ class freecad_env():
         self.doc.FemConstraintForce.Force = self.force_value
         self.doc.FemConstraintForce.Direction = (box_obj, ['Face6'])
         self.doc.FemConstraintForce.Reversed = True if force_dir_str == 'top' else False
-        self.doc.FemConstraintForce.Scale = self.force_factor # TODO: this doesn't work, find a better way
+        self.doc.FemConstraintForce.Scale = self.force_factor  # TODO: this doesn't work, find a better way
         self.doc.FemConstraintForce.References = list(
             zip([obj] * len(self.face_force_indx), ['Face' + str(x + 1) for x in self.face_force_indx]))
-
 
     def create_FEM_solid(self):
         self.material_object = ObjectsFem.makeMaterialSolid(self.doc, 'SolidMaterial')
@@ -278,7 +285,6 @@ class freecad_env():
         self.material_object.Material = mat
         # FemGui.getActiveAnalysis().addObject(material_object)
         self.doc.Analysis.addObject(self.material_object)
-
 
     def creating_analysis(self):
         self.analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
@@ -326,6 +332,7 @@ class freecad_env():
         # msh = self.doc.getObject('Mesh')
         # msh.Label = 'Mesh'
         # del msh
+
     def create_mesh(self, mesh):
         vertices = np.array([p.Vector for p in mesh.Points])
         faces = np.array([f.PointIndices for f in mesh.Facets])
@@ -364,7 +371,6 @@ class freecad_env():
             filename = save_path + 'result_' + str(i + 1) + '.ply'
             Mesh.export(obj, filename)
             del obj
-
 
     def save_result_info(self, save_path, pickle_obj):
         with open(save_path + '.pickle', 'wb') as handle:
@@ -433,9 +439,11 @@ class freecad_env():
     def get_random_action(self):
         if (self.action_type == 'circle'):
             # TODO: is this optimized? maybe there is a cleaner way?
-            c_circle = np.array([np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
-                                 np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
-            r_circle = np.random.uniform(self.EPSILON * 10, abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
+            c_circle = np.array(
+                [np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
+                 np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
+            r_circle = np.random.uniform(self.EPSILON * 10,
+                                         abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
             region_values = (c_circle, r_circle)
         elif (self.action_type == 'rectangle'):
             w_rectangle = self.obj_dims[self.column_index] / self.NUM_CS
