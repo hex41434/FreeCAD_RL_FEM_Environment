@@ -12,5 +12,13 @@ flags:
   flag_rand_action: 0
   flag_save: 0
   action_type: 'circle'
+  flag_elong: 'length'
 
 max_triangles: 1000
+num_bins: 1000
+num_cs: 20 # number of cross-sections, in case of rectangular actions space
+
+obj_dim:
+  height: 2
+  width: 5
+  length: 50

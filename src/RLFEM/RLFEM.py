@@ -21,6 +21,12 @@ class RLFEM(gym.Env):
                  flag_save=None,
                  action_type=None,
                  max_triangles=None,
+                 flag_elong=None,
+                 num_bins=None,
+                 num_cs=None,
+                 obj_dim_h=None,
+                 obj_dim_w=None,
+                 obj_dim_l=None,
                  try_crash_num=5):
         """
         :param path: path to the .ply file.
@@ -32,7 +38,14 @@ class RLFEM(gym.Env):
                                         num_actions=num_actions,
                                         flag_save=flag_save,
                                         action_type=action_type,
-                                        max_triangles=max_triangles)
+                                        max_triangles=max_triangles,
+                                        flag_elong=flag_elong,
+                                        num_bins=num_bins,
+                                        num_cs=num_cs,
+                                        obj_dim_h=obj_dim_h,
+                                        obj_dim_w=obj_dim_w,
+                                        obj_dim_l=obj_dim_l
+                                        )
 
         super().__init__()  # TODO: could this line be called before interface super(RLFEM, self).__init__()
 

@@ -47,7 +47,13 @@ class FreeCADWrapper(object):
             'flag_rand_action',
             'flag_save',
             'action_type',
-            'max_triangles'
+            'max_triangles',
+            'flag_elong',
+            'num_bins',
+            'num_cs',
+            'obj_dim_h',
+            'obj_dim_w',
+            'obj_dim_l'
         }
 
         self.path = cfg['path']['load_path']
@@ -58,6 +64,13 @@ class FreeCADWrapper(object):
         self.flag_save = cfg['flags']['flag_save']
         self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
         self.max_triangles = cfg['max_triangles']
+        self.flag_elong = cfg['flags']['flag_elong']
+        self.NUM_BIN = cfg['num_bins']
+        self.NUM_CS = cfg['num_cs']  # number of cross-sections, in case of rectangular actions space
+        self.obj_dim_h = cfg['obj_dim']['height']
+        self.obj_dim_w = cfg['obj_dim']['width']
+        self.obj_dim_l = cfg['obj_dim']['length']
+
 
         self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
@@ -115,11 +128,6 @@ class FreeCADWrapper(object):
         self.WIDTH = self.obj_dims[1]  # y direction
         self.HEIGHT = self.obj_dims[2]  # z direction
 
-        # TODO: arbitrary numbers, give as parameters
-        self.NUM_BIN = 1000
-        self.NUM_CS = 20  # number of cross-sections, in case of rectangular actions space
-
-        self.flag_elong = 'length'
         self.calc_epsilon()
 
         self.v_CoM_sorted = self.get_sorted_CoM(self.v_CoM, self.column_index)
@@ -140,9 +148,9 @@ class FreeCADWrapper(object):
 
     def create_initial_cube(self):
         obj = self.doc.addObject('Part::Box', 'Box')
-        obj.Height = 2
-        obj.Width = 5
-        obj.Length = 50
+        obj.Height = self.obj_dim_h
+        obj.Width = self.obj_dim_w
+        obj.Length = self.obj_dim_l
         msh = self.doc.addObject('Mesh::Feature', 'Cube_Mesh')
         __part__ = obj
         __shape__ = __part__.Shape.copy(False)
@@ -164,7 +172,7 @@ class FreeCADWrapper(object):
         __s__ = shape_obj.Shape
         __s__ = Part.Solid(__s__)
         solid_obj = self.doc.addObject('Part::Feature', shape_obj.Name + '_solid')
-        solid_obj.Label = shape_obj.Name + ' (Solid)'
+        solid_obj.Label = shape_obj.Name + '_solid'
         solid_obj.Shape = __s__
         if (not (self.path == '')) or (self.flag_first_run == 0):
             solid_obj.Shape = solid_obj.Shape.removeSplitter()
