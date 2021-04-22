@@ -134,3 +134,4 @@ dmypy.json
 *.obj
 *.off
 *.pickle
+*.out
