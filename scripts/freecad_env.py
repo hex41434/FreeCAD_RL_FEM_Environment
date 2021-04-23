@@ -252,6 +252,8 @@ class freecad_env():
         femmesh_obj = self.doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
         femmesh_obj.Shape = obj
         femmesh_obj.MaxSize = 1
+        femmesh_obj.Fineness = "VeryCoarse"
+
         self.doc.Analysis.addObject(femmesh_obj)
 
     def add_FEM_constraint_fixed(self, obj):
@@ -326,8 +328,10 @@ class freecad_env():
 
         out_mesh = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result_object)
         self.new_mesh = Mesh.Mesh(out_mesh)
-        if (len(self.new_mesh.Facets) >= 1.1 * self.max_triangles):
-            self.new_mesh = self.mesh_decimation(self.new_mesh)
+        
+        # if (len(self.new_mesh.Facets) >= 1.1 * self.max_triangles):
+        #     self.new_mesh = self.mesh_decimation(self.new_mesh)
+        
         Mesh.show(self.new_mesh, 'Mesh_{:02d}'.format(self.count_action))
         # msh = self.doc.getObject('Mesh')
         # msh.Label = 'Mesh'
