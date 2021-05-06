@@ -20,7 +20,7 @@ pip install git+https://github.com/hex41434/FreeCAD_RL_FEM_Simulator.git@master
 
 ## Documentation
 
-The documentation is at <https://RLFEM.github.io>. To generate the documentation, you will need:
+The documentation is at <https://hex41434.github.io/FreeCAD_RL_FEM_Environment/>. To generate the documentation, you will need:
 
 ```bash
 pip install mkdocs mkdocs-material mkdocstrings pymdown-extensions mknotebooks
