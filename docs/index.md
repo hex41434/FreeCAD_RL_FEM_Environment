@@ -8,6 +8,7 @@ Dependencies:
 
 * `gym`
 * `freecad`
+* `trimesh`
 
 As `freecad` is only available as a conda package, you should install RLFEM as:
 
