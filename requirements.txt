@@ -3,3 +3,5 @@ gym
 freecad
 pyyaml
 open3d
+trimesh
+rtree
