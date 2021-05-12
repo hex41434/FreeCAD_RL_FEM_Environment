@@ -12,7 +12,7 @@ import trimesh
 import numpy as np
 import time
 
-def init_shape(doc, load_3d=False):
+def init_shape(doc, load_3d=True):
 
     if load_3d:
         Mesh.insert(u"./savedmesh/trimesh_.obj",doc.Name)
@@ -212,7 +212,7 @@ def convert_to_solid(doc):
     doc.recompute()
     return doc, solid
 
-def set_constraint_force(doc,force,force_position,region=1,force_normal=None):
+def set_constraint_force_placement(doc,force_position,region=1,force_normal=None):
 
     solid = doc.Mesh001_solid
     ref_list = []
@@ -245,12 +245,15 @@ def set_constraint_force(doc,force,force_position,region=1,force_normal=None):
     print(f'num of faces as force constraints: {len(ref_list)}')
     doc.FemConstraintForce.References  = ref_list
     #set
-    doc.FemConstraintForce.Force = force
     doc.FemConstraintForce.Direction = (doc.RefBox,["Face6"])
     doc.FemConstraintForce.Reversed = False
     doc.FemConstraintForce.Scale = 1
     
     return doc, ref_indx
+
+def set_constraint_force_value(doc, force):
+    doc.FemConstraintForce.Force = force
+    return doc
 
 def set_constraint_fixed(doc):
     
@@ -317,15 +320,17 @@ def clear_constraints(doc):
 
 def remove_old_mesh_result_mesh(doc,name="Mesh"):
     mesh_result_mesh = doc.getObject(name)
-    doc.removeObject(mesh_result_mesh.Name)
-    print("mesh result mesh is removed...")
+    if mesh_result_mesh:
+        doc.removeObject(mesh_result_mesh.Name)
+        print("mesh result mesh is removed...")
     return doc 
     
 
 def remove_old_shape_result_mesh(doc,name="Mesh001"):
     shape_result_mesh = doc.getObject(name)
-    doc.removeObject(shape_result_mesh.Name)
-    print("shape result mesh is removed...")
+    if shape_result_mesh:
+        doc.removeObject(shape_result_mesh.Name)
+        print("shape result mesh is removed...")
     return doc
 
 def remove_old_solid(doc):
