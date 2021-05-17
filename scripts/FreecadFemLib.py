@@ -10,63 +10,117 @@ import femmesh.femmesh2mesh
 from femtools import ccxtools
 import trimesh
 import numpy as np
-import time
+import openpyxl
+from openpyxl import Workbook
 
 def init_shape(doc, load_3d=True):
 
     if load_3d:
-        Mesh.insert(u"./savedmesh/trimesh_.obj",doc.Name)
-        print("\n ******* Mesh.obj is loaded ******* \n")
+        # pth = "./savedmesh/"
+        pth = "/scratch/aifa/DATA/FCAD_3D/"
+        # filename = "_20210517153229478077.obj"#init
+        filename = "_20210517163105503117.obj" 
         
-        doc.addObject("Part::Feature","initMesh")
+        Mesh_obj_Name = filename.replace(".obj","")
+
+        Mesh.insert(os.path.join(pth,filename),doc.Name)
+        print("\n ******* Mesh.obj is loaded ******* \n")
+        doc.addObject("Part::Feature","initShape")
+        
+        msh = doc.getObject(Mesh_obj_Name)
+        mesh_OK = checkMesh(msh.Mesh)
+
+        err = False
+        if not mesh_OK:
+            err = True
+            print("ERRRR")
+
         s=Part.Shape()
-        s.makeShapeFromMesh(doc.getObject("trimesh_").Mesh.Topology,0.100000)
-        doc.getObject("initMesh").Shape=s
-        doc.getObject("initMesh").purgeTouched()
+        s.makeShapeFromMesh(doc.getObject(Mesh_obj_Name).Mesh.Topology,0.100000)
+        doc.getObject("initShape").Shape=s
+        doc.getObject("initShape").purgeTouched()
         del s
 
-        sh=doc.initMesh.Shape
+        sh=doc.initShape.Shape
         sh=Part.Solid(sh)
-        obj=doc.addObject("Part::Feature","Mesh001_solid")
-        obj.Label="Solid"
+        obj=doc.addObject("Part::Feature","Solid")
         obj.Shape=sh
         del sh, obj
         
-        state0_trimesh = Meshobj_to_trimesh(doc.getObject("trimesh_").Mesh)
-        doc = remove_old_mesh_result_mesh(doc,name="trimesh_")
-        doc = remove_old_shape_result_mesh(doc,name="initMesh")
+        state0_trimesh = Meshobj_to_trimesh(doc.getObject(Mesh_obj_Name).Mesh)
+        doc = remove_old_mesh_result_mesh(doc,name=Mesh_obj_Name)
+        doc = remove_old_shape_result_mesh(doc,name="initShape")
         
     else:        
-        Solid_obj = doc.addObject("Part::Box", "Mesh001_solid")
-        Solid_obj.Height = 3
-        Solid_obj.Width = 6
-        Solid_obj.Length = 80
+        Solid_obj = doc.addObject("Part::Box", "Solid")
+        Solid_obj.Height = 2
+        Solid_obj.Width = 5
+        Solid_obj.Length = 100
         
-        msh = doc.addObject("Mesh::Feature","msh")
-        prt = doc.getObject("Mesh001_solid")
+        Mesh_obj_Name = "initBox"
+
+        msh = doc.addObject("Mesh::Feature",Mesh_obj_Name)
+        prt = doc.getObject("Solid")
         shp = prt.Shape.copy(False)
         shp.Placement = prt.getGlobalPlacement()
         msh.Mesh=MeshPart.meshFromShape(Shape=shp,Fineness=2,SecondOrder=0,Optimize=1,AllowQuad=0)
-        msh.Label="msh"
         del prt, shp
 
-        state0_trimesh = Meshobj_to_trimesh(doc.getObject("msh").Mesh)
-        doc = remove_old_shape_result_mesh(doc,name="msh")
+        state0_trimesh = Meshobj_to_trimesh(doc.getObject(Mesh_obj_Name).Mesh)
+        doc = remove_old_shape_result_mesh(doc,name=Mesh_obj_Name)
 
-    return doc,state0_trimesh
+    return doc,state0_trimesh,Mesh_obj_Name
+
+def checkMesh(msh):
+    mesh_OK = True
+
+    invalid_points = Mesh.Mesh.hasInvalidPoints(msh)
+    has_manifolds = Mesh.Mesh.hasNonManifolds(msh)
+    orient_faces = Mesh.Mesh.hasNonUniformOrientedFacets(msh)
+    self_intersect = Mesh.Mesh.hasSelfIntersections(msh)
+
+    print("--------")
+    print(f"invalid_points: {invalid_points}, has_manifolds: {has_manifolds},orient_faces: {orient_faces}, self_intersect: {self_intersect}")
+    print("--------")
+    
+    if (invalid_points) or (has_manifolds) or (orient_faces) or (self_intersect):
+        mesh_OK = False
+        print("     XXX Mesh is not healthy!  XXX ")
+
+    return mesh_OK
+
+# def add_to_excel_file(initMesh,force_position,force_val,sav):
+def add_to_excel_file(rows_list):
+
+    # pth = "/scratch/aifa/DATA/FCAD_3D"
+    pth = "/scratch/aifa/MyRepo/RL_FEM/FreeCAD_RL_FEM_Environment/scripts/savedmesh"
+    xls_obj = os.path.join(pth,'demo.xlsx')
+    
+    # row_data = [f"{initMesh}.obj",force_position,force_val,f"{sav}.obj"]
+    
+    if not os.path.exists(xls_obj):
+        wbook = Workbook()
+    else:
+        wbook = openpyxl.load_workbook(xls_obj)
+        
+    wsheet = wbook.worksheets[0]
+    for row_data in rows_list:
+        wsheet.append(row_data)    
+    
+    wbook.save(xls_obj)
 
 def Add_Ref_Object(doc):
     box_obj = doc.addObject('Part::Box', 'RefBox')
-    box_obj.Height = 3
-    box_obj.Width = 6
-    box_obj.Length = 80
+    box_obj.Height = 2
+    box_obj.Width = 5
+    box_obj.Length = 100
     return doc
 
 def document_setup(doc,trimesh_scene_meshes):
     doc = Add_Ref_Object(doc)
 
     #state 0
-    doc, state0 = init_shape(doc)
+    doc, state0, initMesh = init_shape(doc)
     trimesh_scene_meshes.append(state0)
 
     doc = create_analysis(doc)
@@ -75,7 +129,7 @@ def document_setup(doc,trimesh_scene_meshes):
 
     doc = create_constraint_fixed(doc)
     doc = create_constraint_force(doc)
-    return doc,trimesh_scene_meshes
+    return doc,trimesh_scene_meshes,initMesh
 
 def create_analysis(doc):
     analysis_object = ObjectsFem.makeAnalysis(doc, 'Analysis')
@@ -86,13 +140,22 @@ def add_solver(doc):
     return doc
 
 def create_shape_femmesh(doc):
-    femmesh_obj = ObjectsFem.makeMeshNetgen(doc, 'FEMMeshNetgen')
+    fem_ok = True
+    # femmesh_obj = ObjectsFem.makeMeshNetgen(doc, 'FEMMeshNetgen')
+    femmesh_obj = doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
     femmesh_obj.Fineness = "VeryCoarse"
     #femmesh_obj.SecondOrder = False
-    femmesh_obj.Shape = doc.Mesh001_solid
-    doc.Analysis.addObject(femmesh_obj)
-    doc.recompute()
-    return doc
+    femmesh_obj.Shape = doc.Solid
+    try:
+        doc.recompute()
+    except:
+        print("GZ")
+    if len(femmesh_obj.FemMesh.Faces)>0:
+        doc.Analysis.addObject(femmesh_obj)
+    else:
+        fem_ok = False
+        print("ERRR - no femmesh is created!")    
+    return doc, fem_ok
 
 def create_constraint_fixed(doc):
     doc.addObject("Fem::ConstraintFixed","FemConstraintFixed")
@@ -162,8 +225,8 @@ def create_mesh_from_result(doc):
 def export_result_mesh(doc,indx):
     meshobj = [] 
     meshobj.append(doc.getObject("Mesh"))
-
-    savepath ="./savedmesh/"
+ 
+    savepath = "/scratch/aifa/DATA/FCAD_3D"
     savepath = os.path.join(os.getcwd(),savepath)
     filename = f"resultmesh_fcad{indx}.obj"
 
@@ -206,7 +269,7 @@ def convert_to_solid(doc):
         
     shp = doc.Mesh001.Shape
     shp = Part.Solid(shp)
-    solid = doc.addObject("Part::Feature","Mesh001_solid")
+    solid = doc.addObject("Part::Feature","Solid")
     solid.Shape = shp
 
     doc.recompute()
@@ -214,7 +277,7 @@ def convert_to_solid(doc):
 
 def set_constraint_force_placement(doc,force_position,region=1,force_normal=None):
 
-    solid = doc.Mesh001_solid
+    solid = doc.Solid
     ref_list = []
     ref_indx = []
     
@@ -248,16 +311,17 @@ def set_constraint_force_placement(doc,force_position,region=1,force_normal=None
     doc.FemConstraintForce.Direction = (doc.RefBox,["Face6"])
     doc.FemConstraintForce.Reversed = False
     doc.FemConstraintForce.Scale = 1
+    doc.recompute()
     
     return doc, ref_indx
 
-def set_constraint_force_value(doc, force):
+def set_constraint_force_value(doc, force):    
     doc.FemConstraintForce.Force = force
     return doc
 
 def set_constraint_fixed(doc):
     
-    solid = doc.Mesh001_solid
+    solid = doc.Solid
     vec = FreeCAD.Base.Vector((1,0,0))
     ref_list = []
     ref_indx = []
@@ -305,7 +369,7 @@ def generate_complete_meshes_scene(doc,trimesh_scene_meshes):
             ])
 
     mesh_scene = trimesh.Scene(trimesh_scene_meshes)
- #     mesh_scene.camera_transform = camera_new_pose
+    mesh_scene.camera_transform = camera_new_pose
     return mesh_scene
 
 def clear_constraints(doc):
@@ -334,7 +398,7 @@ def remove_old_shape_result_mesh(doc,name="Mesh001"):
     return doc
 
 def remove_old_solid(doc):
-    solid_result_mesh = doc.getObject("Mesh001_solid")
+    solid_result_mesh = doc.getObject("Solid")
     if solid_result_mesh: 
         doc.removeObject(solid_result_mesh.Name)
         print("old solid result mesh is removed...")
@@ -352,7 +416,7 @@ def add_constraints_to_scene_meshes(doc,constraint_indx,color,view_markers=True)
     if view_markers:# view the selected faces by marker
         meshes=[]
         for k in range(N):
-            center = doc.Mesh001_solid.Shape.Faces[constraint_indx[k]].CenterOfMass        
+            center = doc.Solid.Shape.Faces[constraint_indx[k]].CenterOfMass        
 
             marker = trimesh.creation.box(extents=(0.5,0.5,0.5))
             marker.apply_translation(np.array(center))
@@ -367,9 +431,9 @@ def add_constraints_to_scene_meshes(doc,constraint_indx,color,view_markers=True)
         
         for k in range(N):    
             ind = k*3
-            _ver0 = np.array(doc.Mesh001_solid.Shape.Faces[constraint_indx[k]].Vertexes[0].Point)
-            _ver1 = np.array(doc.Mesh001_solid.Shape.Faces[constraint_indx[k]].Vertexes[1].Point)
-            _ver2 = np.array(doc.Mesh001_solid.Shape.Faces[constraint_indx[k]].Vertexes[2].Point)
+            _ver0 = np.array(doc.Solid.Shape.Faces[constraint_indx[k]].Vertexes[0].Point)
+            _ver1 = np.array(doc.Solid.Shape.Faces[constraint_indx[k]].Vertexes[1].Point)
+            _ver2 = np.array(doc.Solid.Shape.Faces[constraint_indx[k]].Vertexes[2].Point)
 
             VEC[ind]   = _ver0
             VEC[ind+1] = _ver1
@@ -397,34 +461,32 @@ def trimesh_to_mesh_topology(result_trimesh):
     result_trimesh_topology = (vecs , fcs)
     return result_trimesh_topology
 
-def save_trimesh(mytrimesh, indx):
-    mytrimesh.export(file_obj=f'./savedmesh/trimesh_result_{indx}.obj')
+def save_trimesh(mytrimesh, saved_filename):
+    pth = "/scratch/aifa/DATA/FCAD_3D"
+    file_obj = os.path.join(pth,saved_filename)
+    mytrimesh.export(file_obj)
+    print(f'file is saved: {file_obj}')
 
 def scene_view_normals(mytrimesh):
-    
     vec = np.column_stack((mytrimesh.vertices, mytrimesh.vertices + (mytrimesh.vertex_normals * mytrimesh.scale * .05)))
     vec = vec.reshape((-1, 2, 3))
 
     path = trimesh.load_path(vec)
     path.colors = np.row_stack((len(vec)*[0,0,0,255])).reshape((-1,4))
     scene = trimesh.Scene([mytrimesh, path])
-
     return scene
 
-def set_camera_pose(doc, mytrimesh):
+def set_camera_pose(doc, scene):
     
     x,y,z = doc.RefBox.Shape.CenterOfMass
- #     x,y,z = mytrimesh.centroid 
-    
     camera_new_pose = np.array([
             [ 0.70710678,  0.0        ,  0.70710678,     x],
             [ 0.70710678,  0.0        ,  0.70710678,     y+80],
             [ 0.0       , -1.0        ,  0.0       ,     z],
             [ 0.0       ,  0.0        ,  0.0       ,     1.0]
             ])
-    sn = trimesh.Scene(mytrimesh)
-    sn.camera_transform = camera_new_pose
-    return sn
+    scene.camera_transform = camera_new_pose
+    return scene
     
 
 def concat_meshes(mesh1,mesh2):
