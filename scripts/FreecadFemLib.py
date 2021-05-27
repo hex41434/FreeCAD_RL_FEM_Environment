@@ -13,7 +13,7 @@ import numpy as np
 import openpyxl
 from openpyxl import Workbook
 
-def init_shape(doc, pth=None, filename=None, load_3d=True   ):
+def init_shape(doc, pth=None, filename=None, load_3d=True):
     state0_trimesh = []
     mesh_OK = True
     if load_3d:
