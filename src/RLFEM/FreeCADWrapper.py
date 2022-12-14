@@ -1,29 +1,32 @@
 import os
 import sys
 
-if "CONDA_PREFIX" in os.environ.keys():
-    sys.path.append(os.path.join(os.environ["CONDA_PREFIX"], "lib"))
+import pymeshlab
+conda_active_path = sys.exec_prefix
+# conda_active_path = os.environ["CONDA_PREFIX"]
+sys.path.append(os.path.join(conda_active_path, "lib"))
 
-# Import FreeCAD
+import FreeCAD
+import Part
+import ObjectsFem
+import Mesh
+import MeshPart
+import Fem
+import femmesh.femmesh2mesh
 try:
-    import FreeCAD
-    import FreeCADGui
-    import Part
-    import ObjectsFem
-    # from femguiobjects import FemGui
-    # import FemGui
-    # from Mod import Fem
-    import Fem
-    import Mesh
-    import MeshPart
-    import femmesh.femmesh2mesh
     from femtools import ccxtools
-except:
-    print("FreeCAD is not installed, skipping for now.")
-
+except ImportError:
+    print('ccxtools_import_passed...')
+from femtools import ccxtools
+from femmesh.gmshtools import GmshTools as gt
+import trimesh
 import numpy as np
+import datetime
+import random
+import openpyxl
+from openpyxl import Workbook
 import yaml
-import utils_3d
+
 
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
@@ -40,280 +43,177 @@ class FreeCADWrapper(object):
         with open(env_config_path, 'r') as f:
             cfg = yaml.safe_load(f)
         allowed_keys = {
-            'path',
-            'force_value',
-            'force_factor',
-            'num_actions',
-            'flag_rand_action',
-            'flag_save',
-            'action_type',
-            'max_triangles',
-            'flag_elong',
-            'num_bins',
-            'num_cs',
-            'obj_dim_h',
-            'obj_dim_w',
-            'obj_dim_l'
-        }
+            'save_path', 
+            'loaded_mesh_path',
+            'loaded_mesh_filename',
+            'view_meshes',
+            'xls_pth',
+            'xls_filename'}
 
-        self.path = cfg['path']['load_path']
-        self.force_value = cfg['force_params']['force_value']
-        self.force_factor = cfg['force_params']['force_factor']
-        self.num_actions = cfg['num_actions']
-        self.flag_rand_action = cfg['flags']['flag_rand_action']
-        self.flag_save = cfg['flags']['flag_save']
-        self.action_type = cfg['flags']['action_type']  # 'circle' or 'rectangle'
-        self.max_triangles = cfg['max_triangles']
-        self.flag_elong = cfg['flags']['flag_elong']
-        self.NUM_BIN = cfg['num_bins']
-        self.NUM_CS = cfg['num_cs']  # number of cross-sections, in case of rectangular actions space
-        self.obj_dim_h = cfg['obj_dim']['height']
-        self.obj_dim_w = cfg['obj_dim']['width']
-        self.obj_dim_l = cfg['obj_dim']['length']
-
+        self.save_path = cfg['save_path']
+        self.loaded_mesh_path = cfg['loaded_mesh_path']
+        self.loaded_mesh_filename = cfg['loaded_mesh_filename']
+        self.view_meshes = cfg['view_meshes']
+        self.xls_pth = cfg['xls_pth']
+        self.xls_filename = cfg['xls_filename']
 
         self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
-        # TODO: add ''' import FreeCADGui FreeCADGui.showMainWindow() ''' in case of visualization
-        # TODO: add the number of actions (sequence) and repeat until it's satisfied
-        # self.doc = FreeCAD.getDocument('Unnamed') # CHANGE LATER!
+
         self.doc = FreeCAD.newDocument('doc')
+        self.trimesh_scene_meshes = []
+        self.constraint_scene_meshes = []
+        self.view_meshes = view_meshes #True # for jupyter nb 
 
-        self.initialize_doc()
+        self.fail = False
+        self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
+        if not self.mesh_OK: print('*** init mesh is not acceptable!')
+        self.trimesh_scene_meshes.append(self.state0_trimesh)
 
-    def clear_doc(self):
-        for obj in self.doc.Objects:
-            self.doc.removeObject(obj.Name)
+            def create_fem_analysis(self):
 
-    def initialize_doc(self):
-        self.flag_first_run = 1
-        self.count_action = 0
+        self.force_position, self.force_val = self.generate_action()
 
-        self.flag_success = 1
-        self.flag_break = 0
+        print(f"force position : {self.force_position}\n")
 
-        self.region_values_vec = []
-        self.force_dir_str_vec = []
+        self.doc , self.fem_ok = self.create_shape_femmesh()    
+        if not self.fem_ok: print('*** self.fem_ok is False!')
 
-        if not (self.path == ''):
-            self.insert_mesh()
+        self.doc , self.fixed_indx = self.set_constraint_fixed()
+        self.doc , self.force_indx = self.set_constraint_force_placement(force_position=self.force_position)    
+                                                
+        if len(self.fixed_indx)==0 or len(self.force_indx)==0:
+            print("force or fixed constraints are empty... no more analysis will be executed... ")
+        
+        self.fixed_scene = self.add_constraints_to_scene_meshes(self.fixed_indx,color='blue')
+        self.force_scene = self.add_constraints_to_scene_meshes(self.force_indx,color='red')
+        self.constraint_scene_meshes.append(self.concat_meshes(self.fixed_scene,self.force_scene))
+        self.doc = self.remove_old_shape_result_mesh()
+        self.doc = self.remove_old_mesh_result_mesh()
+        
+        self.doc = self.set_constraint_force_value(self.force_val)
+
+    def generate_action(self):
+            
+            # self.force_position = np.random.randint(20,80)
+            self.force_position = np.random.randint(2,8)
+            # self.force_val = 180000
+            # self.force_val = random.randrange(2500, 10000, 500)
+            self.force_val = random.randrange(250000, 300000, 500)#STEEL
+            return self.force_position, self.force_val
+    
+    def fem_step(self,mesh_decimation=True):
+
+        self.doc, self.fem_volume = self.run_analysis()
+        print(f".....................................fem_volume:{self.fem_volume}")
+        if not self.fem_volume: print("fem_volume is not OK...")
+
+        #create and export result mesh
+        self.doc, self.out_mesh = self.create_mesh_from_result()
+        if (not self.out_mesh) or (not self.checkMesh(self.out_mesh)): self.fail = True   
+
+        self.result_trimesh = self.Meshobj_to_trimesh(self.out_mesh)
+        if(mesh_decimation):
+        # the mesh is needed to be simplified? 
+            self.result_trimesh, self.trimesh_topology = self.simplify_trimesh_result(self.result_trimesh)
         else:
-            # TODO: correct the dimensions
-            self.create_initial_cube()
+            self.trimesh_topology = self.trimesh_to_mesh_topology(self.result_trimesh)
+            
+        self.trimesh_scene_meshes.append(self.result_trimesh)
+        
+        self.save_state()
+        self.prepare_for_next_fem_step()
+        # self.list_doc_objects()
 
-        self.initialize_obj()
-        self.calc_obj_info()
-        self.box_obj = self.doc.addObject('Part::Box', 'Box')
-        # box_obj.ViewObject.Visibility = False
+    def prepare_for_next_fem_step(self):
+        self.doc = self.remove_old_femmesh()
+        self.doc = self.clear_constraints()
+        self.doc = self.remove_old_solid()
 
-    def initialize_obj(self):
-        if (self.flag_first_run == 1):
-            self.obj = self.doc.Objects[-1]
+        self.doc = self.create_shape_from_mesh(self.trimesh_topology) 
+        self.convert_to_solid()
+        
+    def convert_to_solid(self):        
+        shp = self.doc.Mesh001.Shape
+        shp = Part.Solid(shp)
+        solid = self.doc.addObject("Part::Feature","Solid")
+        solid.Shape = shp
+
+        self.doc.recompute()
+
+    def clear_constraints(self):
+        self.doc.FemConstraintFixed.References = [(self.doc.RefBox,["Face6"])]
+        self.doc.FemConstraintForce.References = [(self.doc.RefBox,["Face6"])]
+        self.doc.FemConstraintForce.Direction = None
+        
+        self.doc.recompute()
+        print("FemConstraints cleared...")
+        return self.doc
+    
+    def remove_old_solid(self):
+        solid_result_mesh = self.doc.getObject("Solid")
+        if solid_result_mesh: 
+            self.doc.removeObject(solid_result_mesh.Name)
+            print("old solid result mesh is removed...")
         else:
-            self.obj = self.doc.getObject('Mesh_{:02d}'.format(self.count_action - 1))
+            print("there is no solid object to be removed... ")
+        
+        self.doc.recompute()    
+        return self.doc
+        
+    
+    def create_shape_from_mesh(self,mesh_topology):    
+        
+        self.doc.addObject("Part::Feature","Mesh001")
+        shape = Part.Shape()
+        shape.makeShapeFromMesh(mesh_topology,0.100000)
+        self.doc.getObject("Mesh001").Shape = shape
+        self.doc.getObject("Mesh001").purgeTouched()
+        
+        print("shape from mesh done...")
+        return self.doc
 
-        if (self.obj.Module == 'Mesh'):
-            self.convert2solidmesh()
-            self.obj = self.doc.Objects[-1]
-            # if (self.flag_first_run == 0):
-            #     self.doc.removeObject(self.doc.getObject('Mesh'))
+    def trimesh_to_mesh_topology(self,result_trimesh):
+        vecs = [] 
+        fcs = [] 
 
-    def calc_obj_info(self):
-        self.v_CoM, self.v_NoF = self.extract_info_mesh(self.obj)
+        vs = result_trimesh.vertices
+        fs = result_trimesh.faces
 
-        self.min_vals = self.v_CoM.min(axis=0)
-        self.max_vals = self.v_CoM.max(axis=0)
-        self.obj_dims = abs(self.max_vals - self.min_vals)
-        self.LENGTH = self.obj_dims[0]  # x direction
-        self.WIDTH = self.obj_dims[1]  # y direction
-        self.HEIGHT = self.obj_dims[2]  # z direction
+        for i in range(len(vs)):
+            v = FreeCAD.Base.Vector(vs[i])
+            vecs.append(v)
 
-        self.calc_epsilon()
+        for i in range(len(fs)):
+            f = (fs[i][0],fs[i][1],fs[i][2])
+            fcs.append(f)
 
-        self.v_CoM_sorted = self.get_sorted_CoM(self.v_CoM, self.column_index)
+        result_trimesh_topology = (vecs , fcs)
+        return result_trimesh_topology
+        
+    def simplify_trimesh_result(self,trmesh):
+        m = pymeshlab.Mesh(trmesh.vertices, trmesh.faces)
+        ms = pymeshlab.MeshSet()
+        ms.add_mesh(m)
+        ms.simplification_quadric_edge_collapse_decimation(targetperc=.6,preservenormal=True,preservetopology=True)
+        m_ = ms.current_mesh()
+        
+        result_trimesh_decimated = trimesh.Trimesh(vertices=m_.vertex_matrix(),faces=m_.face_matrix())
+        ms.delete_current_mesh()
+        trimesh_decimated_topology = self.trimesh_to_mesh_topology(result_trimesh_decimated)
+        result_trimesh_decimated = self.set_trimesh_color(result_trimesh_decimated)
 
-    def calc_epsilon(self):
-        if (self.flag_elong == 'length'):
-            self.EPSILON = self.LENGTH / self.NUM_BIN
-            self.column_index = 0
-        elif (self.flag_elong == 'width'):
-            self.EPSILON = self.WIDTH / self.NUM_BIN
-            self.column_index = 1
-        elif (self.flag_elong == 'height'):
-            self.EPSILON = self.HEIGHT / self.NUM_BIN
-            self.column_index = 2
+        return result_trimesh_decimated,trimesh_decimated_topology
 
-    def insert_mesh(self):
-        Mesh.insert(self.path)
+    def set_trimesh_color(self,mytrimesh):
+        rand_color = trimesh.visual.color.random_color()    
+        
+        cv = trimesh.visual.color.ColorVisuals(mesh=mytrimesh, face_colors=rand_color, vertex_colors=None)
+        mytrimesh.visual = cv
+        return mytrimesh
 
-    def create_initial_cube(self):
-        obj = self.doc.addObject('Part::Box', 'Box')
-        obj.Height = self.obj_dim_h
-        obj.Width = self.obj_dim_w
-        obj.Length = self.obj_dim_l
-        msh = self.doc.addObject('Mesh::Feature', 'Cube_Mesh')
-        __part__ = obj
-        __shape__ = __part__.Shape.copy(False)
-        __shape__.Placement = __part__.getGlobalPlacement()
-        msh.Mesh = MeshPart.meshFromShape(Shape=__shape__, Fineness=2, SecondOrder=0, Optimize=1, AllowQuad=0)
-        msh.Label = 'Cube_Meshed'
-        del msh, __part__, __shape__
-        self.doc.removeObject(obj.Name)
+    def run_analysis(self):
 
-    def select_visible_obj(self):
-        Gui.Selection.clearSelection()
-        for obj in FreeCAD.ActiveDocument.Objects:
-            if obj.ViewObject.isVisible():
-                Gui.Selection.addSelection(obj)
-        sel = FreeCADGui.Selection.getSelection()
-        return sel
-
-    def covert2solid(self, shape_obj):
-        __s__ = shape_obj.Shape
-        __s__ = Part.Solid(__s__)
-        solid_obj = self.doc.addObject('Part::Feature', shape_obj.Name + '_solid')
-        solid_obj.Label = shape_obj.Name + '_solid'
-        solid_obj.Shape = __s__
-        if (not (self.path == '')) or (self.flag_first_run == 0):
-            solid_obj.Shape = solid_obj.Shape.removeSplitter()
-        del __s__
-        return solid_obj
-
-    def convert2solidmesh(self):
-        shape_obj = self.doc.addObject('Part::Feature', self.obj.Name)
-        __shape__ = Part.Shape()
-        __shape__.makeShapeFromMesh(self.obj.Mesh.Topology, 0.1)
-        shape_obj.Shape = __shape__
-        shape_obj.purgeTouched()
-        solid_obj = self.covert2solid(shape_obj)
-        # obj.ViewObject.Visibility = False
-        # shape_obj.ViewObject.Visibility = False
-        del shape_obj, __shape__, solid_obj
-
-    def extract_info_mesh(self, obj):
-        faces = obj.Shape.Faces.copy()
-        v_CoM = []
-        v_NoF = []
-        for i in range(len(faces)):
-            face = faces[i]
-            v_CoM.append(np.concatenate((np.array(face.CenterOfMass), [i])))
-            v_NoF.append(np.array(face.Surface.Axis))
-        v_CoM = np.array(v_CoM)
-        v_NoF = np.array(v_NoF)
-        del faces
-        return v_CoM, v_NoF
-
-    def get_sorted_CoM(self, v_CoM, column_index):
-        return v_CoM[v_CoM[:, column_index].argsort()]
-
-    def get_faces_constraint_fixed(self):
-
-        mask_1 = (abs(self.v_CoM_sorted[:, self.column_index] - self.min_vals[self.column_index]) < self.EPSILON)
-        mask_2 = (abs(self.v_CoM_sorted[:, self.column_index] - self.max_vals[self.column_index]) < self.EPSILON)
-        normal_vector = np.zeros(3)
-        normal_vector[self.column_index] = 1
-        # TODO: 0.95 is arbitrary, it should be given as a parameter.
-        mask_normal_1 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_1, -1].astype(int), :], -normal_vector) > 0.95
-        mask_normal_2 = np.dot(self.v_NoF[self.v_CoM_sorted[mask_2, -1].astype(int), :], normal_vector) > 0.95
-        face_fixed_indx = np.concatenate(
-            (self.v_CoM_sorted[mask_2, -1].astype(int)[mask_normal_2],
-             self.v_CoM_sorted[mask_1, -1].astype(int)[mask_normal_1]))
-        return face_fixed_indx
-
-    def check_valid_region(self, region_values):
-        flag_valid = 1
-        if (self.action_type == 'circle'):
-            c_circle, r_circle = region_values
-            mask_c_circle = (
-                        abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < 10 * self.EPSILON)
-            if not ((c_circle[self.column_index + 1] >= self.v_CoM_sorted[mask_c_circle, self.column_index + 1].min(
-                    axis=0)) & (
-                            c_circle[self.column_index + 1] <= self.v_CoM_sorted[
-                        mask_c_circle, self.column_index + 1].max(axis=0))):
-                print('center of circle does not lie on the mesh')
-                # TODO: CHECK radius as well!
-                flag_valid = 0
-
-        elif (self.action_type == 'rectangle'):
-            coor_rectangle, w_rectangle = region_values
-        return flag_valid
-
-    def get_faces_constraint_force(self, region_values, force_dir_str):
-        face_indx = []
-        if self.action_type == 'circle':
-            c_circle, r_circle = region_values
-            mask_c_circle_1 = (abs(self.v_CoM_sorted[:, self.column_index] - c_circle[self.column_index]) < r_circle)
-            mask_c_circle_2 = np.linalg.norm(
-                self.v_CoM_sorted[mask_c_circle_1, self.column_index:self.column_index + 2] - c_circle,
-                axis=1) <= r_circle
-            face_indx = self.v_CoM_sorted[mask_c_circle_1, -1].astype(int)[mask_c_circle_2]
-
-        elif (self.action_type == 'rectangle'):
-            coor_rectangle, w_rectangle = region_values
-            mask_rectangle_1 = ((coor_rectangle <= self.v_CoM_sorted[:, self.column_index])
-                                & (self.v_CoM_sorted[:, self.column_index] <= coor_rectangle + w_rectangle))
-            face_indx = self.v_CoM_sorted[mask_rectangle_1, -1].astype(int)
-
-        force_direction = np.zeros(3)
-        if (force_dir_str == 'top'):
-            force_direction[self.column_index + 2] = 1
-        elif (force_dir_str == 'bottom'):
-            force_direction[self.column_index + 2] = -1
-
-        mask_normal = np.dot(self.v_NoF[face_indx, :], force_direction) > 0
-        return face_indx[mask_normal]
-
-    def add_FEM_mesh_analysis(self, obj):
-        femmesh_obj = self.doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
-        femmesh_obj.Shape = obj
-        femmesh_obj.MaxSize = 1
-        self.doc.Analysis.addObject(femmesh_obj)
-
-    def add_FEM_constraint_fixed(self, obj):
-        self.doc.addObject('Fem::ConstraintFixed', 'FemConstraintFixed')
-        self.doc.FemConstraintFixed.Scale = 1
-        self.doc.Analysis.addObject(self.doc.FemConstraintFixed)
-        self.face_fixed_indx = self.get_faces_constraint_fixed()
-        self.doc.FemConstraintFixed.References = list(
-            zip([obj] * len(self.face_fixed_indx), ['Face' + str(x + 1) for x in self.face_fixed_indx]))
-
-    def add_FEM_constraint_force(self, obj, box_obj, region_values, force_dir_str):
-        self.doc.addObject('Fem::ConstraintForce', 'FemConstraintForce')
-        self.doc.Analysis.addObject(self.doc.FemConstraintForce)
-
-        self.face_force_indx = self.get_faces_constraint_force(region_values, force_dir_str)
-
-        self.doc.FemConstraintForce.Force = self.force_value
-        self.doc.FemConstraintForce.Direction = (box_obj, ['Face6'])
-        self.doc.FemConstraintForce.Reversed = True if force_dir_str == 'top' else False
-        self.doc.FemConstraintForce.Scale = self.force_factor  # TODO: this doesn't work, find a better way
-        self.doc.FemConstraintForce.References = list(
-            zip([obj] * len(self.face_force_indx), ['Face' + str(x + 1) for x in self.face_force_indx]))
-
-    def create_FEM_solid(self):
-        self.material_object = ObjectsFem.makeMaterialSolid(self.doc, 'SolidMaterial')
-        mat = self.material_object.Material
-        mat['Name'] = 'Steel-Generic'
-        mat['YoungsModulus'] = '210000 MPa'
-        mat['PoissonRatio'] = '0.30'
-        mat['Density'] = '7900 kg/m^3'
-        self.material_object.Material = mat
-        # FemGui.getActiveAnalysis().addObject(material_object)
-        self.doc.Analysis.addObject(self.material_object)
-
-    def creating_analysis(self):
-        self.analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
-        self.analysis_object.addObject(ObjectsFem.makeSolverCalculixCcxTools(self.doc))
-
-    def analysis_run(self, obj, box_obj, region_values, force_dir_str):
-        self.creating_analysis()
-        self.add_FEM_mesh_analysis(obj)
-        self.add_FEM_constraint_fixed(obj)
-        self.add_FEM_constraint_force(obj, box_obj, region_values, force_dir_str)
-        self.create_FEM_solid()
-
-    def calc_analysis(self):
-        self.flag_success = 0
         fea = ccxtools.FemToolsCcx()
         fea.update_objects()
         fea.setup_working_dir()
@@ -322,183 +222,449 @@ class FreeCADWrapper(object):
         if not message:
             fea.purge_results()
             fea.write_inp_file()
-            # on error at inp file writing, the inp file path '' was returned (even if the file was written)
-            # if we would write the inp file anyway, we need to again set it manually
-            # fea.inp_file_name = '/tmp/FEMWB/FEMMeshGmsh.inp'
             fea.ccx_run()
             fea.load_results()
-            self.flag_success = 1
+            self.fem_volume=True
+            print("Analysis done successfully...")
         else:
-            FreeCAD.Console.PrintError('Oh, we have a problem! {}\n'.format(message))  # in report view
-            print('Oh, we have a problem! {}\n'.format(message))  # in python console
+            self.fem_volume=False
+            print("problem occurred! {}\n".format(message))  # in python console
+        return self.doc, self.fem_volume
 
-    def get_result(self):
-        for m in self.doc.Analysis.Group:
-            if m.isDerivedFrom('Fem::FemResultObject'):
-                result_object = m
-                break
-        femmesh_obj = result_object.Mesh.FemMesh
-
-        out_mesh = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result_object)
-        self.new_mesh = Mesh.Mesh(out_mesh)
-        if (len(self.new_mesh.Facets) >= 1.1 * self.max_triangles):
-            self.new_mesh = self.mesh_decimation(self.new_mesh)
-        Mesh.show(self.new_mesh, 'Mesh_{:02d}'.format(self.count_action))
-        # msh = self.doc.getObject('Mesh')
-        # msh.Label = 'Mesh'
-        # del msh
-
-    def create_mesh(self, mesh):
-        vertices = np.array([p.Vector for p in mesh.Points])
-        faces = np.array([f.PointIndices for f in mesh.Facets])
-        mesh_new = utils_3d.create_mesh_open3d(vertices, faces)
-        return mesh_new
-
-    def mesh_decimation(self, mesh):
-        mesh_new = self.create_mesh(mesh)
-        mesh_new = utils_3d.mesh_decimation_open3d(mesh_new, max_triangles=self.max_triangles)
-        return self.create_mesh_obj(mesh_new)
-
-    def create_mesh_obj(self, mesh):
-        triangles = utils_3d.get_mesh_info_open3d(mesh)
-        return Mesh.Mesh(triangles)
-
-    def save_result_step(self, save_path):
-        # TODO: add proper save_path and have num_action included in the name
-        ###5
-        # export one mesh as .ply file
-        __objs__ = []
-        __objs__.append(self.doc.getObject('Mesh_{:02d}'.format(self.count_action)))
-
-        save_path = './'
-
-        filename = save_path + 'result_' + str(self.count_action) + '.ply'
-
-        # Mesh.export(__objs__,u'wowply.ply')
-        Mesh.export(__objs__, filename)
-
-        del __objs__
-
-    def save_result_all(self, save_path):
-
-        for i in range(self.num_actions):
-            obj = [self.doc.getObject('Mesh_{:02d}'.format(i + 1))]
-            filename = save_path + 'result_' + str(i + 1) + '.ply'
-            Mesh.export(obj, filename)
-            del obj
-
-    def save_result_info(self, save_path, pickle_obj):
-        with open(save_path + '.pickle', 'wb') as handle:
-            pickle.dump(pickle_obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    def reset_doc_action(self):
-        for obj in self.doc.Objects:
-            if not (obj.Label.startswith('Mesh_') or obj.Label == 'Box'):
-                self.doc.removeObject(obj.Name)
-            # elif (obj.Label == 'Mesh'):
-            #     obj.Label = 'Mesh_old'
-
-    def run_loop(self, region_values=None, force_dir_str='top'):
-        while (self.count_action < self.num_actions):
-            self.count_action += 1
-            if (self.flag_first_run == 1):
-                self.flag_first_run = 0
-            else:
-                self.reset_doc_action()
-                self.initialize_obj()
-                self.calc_obj_info()
-
-            if (self.flag_rand_action == 0) and (region_values is None):
-                if (self.action_type == 'circle'):
-                    # c_circle = np.array([15, 7])
-                    c_circle = np.array([40, 7])
-                    r_circle = 5
-                    force_dir_str = 'top'
-                    region_values = (c_circle, r_circle)
-                elif (self.action_type == 'rectangle') and (region_values is None):
-                    coor_rectangle = np.array([25])
-                    w_rectangle = 7
-                    force_dir_str = 'top'
-                    region_values = (coor_rectangle, w_rectangle)
-
-            if (self.flag_rand_action == 1):
-                region_values, force_dir_str = self.get_random_action()
-            self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
+    def create_mesh_from_result(self):
+        out_mesh = []
+        femmesh_result = self.doc.getObject("ResultMesh").FemMesh
+        ccx_result = self.doc.getObject("CCX_Results")
+        try:
+            out = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_result, ccx_result)
+            out_mesh = Mesh.Mesh(out)
+            Mesh.show(out_mesh)
+            print("mesh_out is converted to mesh...")
             self.doc.recompute()
-            self.calc_analysis()
-            if (self.flag_success == 1):
-                self.get_result()
-                if (self.flag_save == 1):
-                    self.save_result_step('./')
+        except:
+            print("result can not be converted to mesh!")
+            
+        return self.doc, out_mesh
+        
+    def set_constraint_force_value(self, force):    
+        self.doc.FemConstraintForce.Force = force
+        return self.doc
+        
+    def set_constraint_fixed(self):
+        solid = self.doc.Solid
+        vec = FreeCAD.Base.Vector((1,0,0))
+        ref_list = []
+        ref_indx = []
+        
+        fix_heads = False
+        if fix_heads:
+            #fix the right side
+            for i in range(len(solid.Shape.Faces)):
+                find_x = solid.Shape.Faces[i].CenterOfMass.x
+                if find_x <=1.2: # condition for region selection
 
-                self.region_values_vec.append(region_values)
-                self.force_dir_str_vec.append(force_dir_str)
-            else:
-                self.flag_break = 1
-                break
+                    find_face = solid.Shape.Faces[i]
+                    u,v = find_face.Surface.parameter(find_face.CenterOfMass)
+                    nrml = find_face.normalAt(u,v)
+                    if len(ref_indx)<=15:
+                        if np.abs(nrml.dot(vec)) >=0.99:
+                            ref_list.append((solid, f"Face{i+1}"))
+                            ref_indx.append(i)    
+                    else:
+                        break
+            #fix the left side
+            vec = FreeCAD.Base.Vector((-1,0,0))
+            for i in range(len(solid.Shape.Faces)):
+                find_x = solid.Shape.Faces[i].CenterOfMass.x
+                if find_x >=48.5: # condition for region selection
 
-        if (self.flag_save == 1):
-            pickle_dict = self.create_pickle_dict()
-            self.save_result_info('./pickle_meta_data', pickle_dict)
-        return self.flag_break
+                    find_face = solid.Shape.Faces[i]
+                    u,v = find_face.Surface.parameter(find_face.CenterOfMass)
+                    nrml = find_face.normalAt(u,v)
+                    if len(ref_indx)<=30:
+                        if np.abs(nrml.dot(vec)) >=0.99:
+                            ref_list.append((solid, f"Face{i+1}"))
+                            ref_indx.append(i)
+                    else:
+                        break
+                    
+        else: #fix from the bottom
+            for i in range(len(solid.Shape.Faces)):
+                find_z = solid.Shape.Faces[i].CenterOfMass.z
+                if find_z <=0.1: # condition for region selection
+                    find_face = solid.Shape.Faces[i]
+                    ref_list.append((solid, f"Face{i+1}"))
+                    ref_indx.append(i)
+                                    
+        self.doc.FemConstraintFixed.References  = ref_list
+        print(f'num of faces as fixed constraints: {len(ref_list)}')
 
-    def create_pickle_dict(self):
-        pickle_dict = {'region_values': self.region_values_vec,
-                       'force_dir_str': self.force_dir_str_vec,
-                       'episode_length': self.num_actions,
-                       'action_type': self.action_type,
-                       'force_value': self.force_value,
-                       'force_factor': self.force_factor}
-        return pickle_dict
+        return self.doc, ref_indx
+        
+    def set_constraint_force_placement(self,force_position,region=1,force_normal=None):
 
-    def get_random_action(self):
-        if (self.action_type == 'circle'):
-            # TODO: is this optimized? maybe there is a cleaner way?
-            c_circle = np.array(
-                [np.random.uniform(self.min_vals[self.column_index], self.max_vals[self.column_index], 1),
-                 np.random.uniform(self.min_vals[self.column_index + 1], self.max_vals[self.column_index + 1], 1)])
-            r_circle = np.random.uniform(self.EPSILON * 10,
-                                         abs(self.max_vals[self.column_index] - self.min_vals[self.column_index]), 1)
-            region_values = (c_circle, r_circle)
-        elif (self.action_type == 'rectangle'):
-            w_rectangle = self.obj_dims[self.column_index] / self.NUM_CS
-            coor_rectangle = np.random.uniform(self.min_vals[self.column_index],
-                                               self.max_vals[self.column_index] - w_rectangle, 1)
-            region_values = (coor_rectangle, w_rectangle)
-        force_dir_str = 'top' if np.random.randint(2, size=1) else 'bottom'
-        return region_values, force_dir_str
-
-    def run_step(self, region_values=None, force_dir_str='top'):
-        self.count_action += 1
-        if (self.flag_first_run == 1):
-            self.flag_first_run = 0
+        solid = self.doc.Solid
+        ref_list = []
+        ref_indx = []
+        
+        if len(solid.Shape.Faces)==6:
+            ref_list.append((solid, f"Face6"))
+            ref_indx.append(5) 
         else:
-            self.reset_doc_action()
-            self.initialize_obj()
-            self.calc_obj_info()
+            length_min = solid.Shape.BoundBox.XMin
+            length_max = solid.Shape.BoundBox.XMax
+            safety = 2
 
-        flag_valid = 0
-        if (region_values == None):
-            region_values, force_dir_str = self.get_random_action()
-        else:
-            # TODO: fix the validity check.
-            # flag_valid = self.check_valid_region()
-            flag_valid = 1
+            start = length_min+safety if force_position<length_min+safety else (force_position - region)
+            end = length_max-safety if force_position>length_max-safety else (force_position + region)
 
-        if (flag_valid == 1):
-            self.analysis_run(self.obj, self.box_obj, region_values, force_dir_str)
+            vec = FreeCAD.Base.Vector((0,0,1))
+            for i in range(len(solid.Shape.Faces)):
+                find_x = solid.Shape.Faces[i].CenterOfMass.x
+                # find_z = solid.Shape.Faces[i].CenterOfMass.z
+
+                if find_x <=end and find_x>=start : 
+                    find_face = solid.Shape.Faces[i]
+                    u,v = find_face.Surface.parameter(find_face.CenterOfMass)
+                    nrml = find_face.normalAt(u,v)
+                    if nrml.dot(vec) >= 0.75:
+                        ref_list.append((solid, f"Face{i+1}"))
+                        ref_indx.append(i) 
+
+        print(f'num of faces as force constraints: {len(ref_list)}')
+        self.doc.FemConstraintForce.References  = ref_list
+        #set
+        self.doc.FemConstraintForce.Direction = (self.doc.RefBox,["Face6"])
+        self.doc.FemConstraintForce.Reversed = True
+        self.doc.FemConstraintForce.Scale = 1
+        self.doc.recompute()
+        
+        return self.doc, ref_indx
+
+    def add_constraints_to_scene_meshes(self,constraint_indx,color,view_markers=True):
+        
+        _color = [255,0,0,0] if color=='red' else [0,0,255,0]
+        
+        N = len(constraint_indx)
+        if view_markers:# view the selected faces by marker
+            meshes=[]
+            for k in range(N):
+                center = self.doc.Solid.Shape.Faces[constraint_indx[k]].CenterOfMass        
+
+                marker = trimesh.creation.box(extents=(0.5,0.5,0.5))
+                marker.apply_translation(np.array(center))
+                marker.visual = trimesh.visual.color.ColorVisuals(mesh=marker, face_colors=_color)            
+                meshes.append(marker)
+                
+            constraint_scene = trimesh.util.concatenate(meshes)
+
+        else:#color the selected faces(not all the faces are shown)
+            VEC = np.zeros((N*3,3))
+            FAC = np.arange(N*3).reshape(-1,3)
+            
+            for k in range(N):    
+                ind = k*3
+                _ver0 = np.array(self.doc.Solid.Shape.Faces[constraint_indx[k]].Vertexes[0].Point)
+                _ver1 = np.array(self.doc.Solid.Shape.Faces[constraint_indx[k]].Vertexes[1].Point)
+                _ver2 = np.array(self.doc.Solid.Shape.Faces[constraint_indx[k]].Vertexes[2].Point)
+
+                VEC[ind]   = _ver0
+                VEC[ind+1] = _ver1
+                VEC[ind+2] = _ver2
+            
+            constraint_scene = trimesh.Trimesh(vertices=VEC, faces=FAC)
+            
+        return constraint_scene
+            
+    def concat_meshes(self,mesh1,mesh2):
+        concatenated_mesh = trimesh.util.concatenate(mesh1,mesh2)
+        return concatenated_mesh
+        
+    def create_shape_femmesh(self):
+        self.fem_ok = True
+        #### femmesh_obj = ObjectsFem.makeMeshNetgen(doc, 'FEMMeshNetgen')#### old function
+        femmesh_obj = self.doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
+        femmesh_obj.Fineness = "VeryCoarse"
+        femmesh_obj.SecondOrder = False
+        femmesh_obj.Optimize = False
+        femmesh_obj.Shape = self.doc.Solid # create femmesh from object named:Solid
+        try:
             self.doc.recompute()
-            self.calc_analysis()
-            if (self.flag_success == 1):
-                self.get_result()
+        except:
+            print("GZ")
 
-                self.region_values_vec.append(region_values)
-                self.force_dir_str_vec.append(force_dir_str)
-            else:
-                self.flag_break = 1
-
+        if len(femmesh_obj.FemMesh.Faces)>0:
+            self.doc.Analysis.addObject(femmesh_obj)
+            print("femmesh created from shape")
         else:
-            print('invalid action!')
+            self.fem_ok = False
+            print("ERRR - no femmesh is created!")    
+        return self.doc, self.fem_ok    
+    
+    def init_shape(self,load_3d=True): # create state0 - load a 3d mesh or create a cuboid
+        self.state0_trimesh = []
+        self.mesh_OK = True
+        if load_3d:
 
-        return self.flag_break
+            self.Mesh_obj_Name = self.loaded_mesh_filename.replace(".obj","")
 
+            Mesh.insert(os.path.join(self.loaded_mesh_path,self.loaded_mesh_filename),self.doc.Name)
+            print(f"\n ******* {self.loaded_mesh_filename} is loaded ******* \n")
+            
+            self.msh = self.doc.getObject(self.Mesh_obj_Name)
+            print(self.list_doc_objects())
+            self.mesh_OK = self.checkMesh(self.msh.Mesh) # important
+            print(f'mesh_OK:{self.mesh_OK}')
+            
+            
+            if self.mesh_OK:
+                self.doc.addObject("Part::Feature","initShape")
+                s=Part.Shape()
+                s.makeShapeFromMesh(self.doc.getObject(self.Mesh_obj_Name).Mesh.Topology,0.100000)
+                self.doc.getObject("initShape").Shape = s
+                self.doc.getObject("initShape").purgeTouched()
+                del s
+
+                sh=self.doc.initShape.Shape
+                sh=Part.Solid(sh)
+                obj=self.doc.addObject("Part::Feature","Solid")
+                obj.Shape=sh
+                print(f'shape bounding box: {sh.BoundBox}')
+                del sh, obj
+                
+                self.state0_trimesh = self.Meshobj_to_trimesh(self.doc.getObject(self.Mesh_obj_Name).Mesh)
+                self.doc = self.remove_old_shape_result_mesh(name="initShape")
+        
+        else:        
+            Solid_obj = self.doc.addObject("Part::Box", "Solid")
+            Solid_obj.Height = 2
+            Solid_obj.Width = 5
+            Solid_obj.Length = 100
+            
+            self.Mesh_obj_Name = "initBox"
+
+            self.msh = self.doc.addObject("Mesh::Feature",self.Mesh_obj_Name)
+            prt = self.doc.getObject("Solid")
+            shp = prt.Shape.copy(False)
+            shp.Placement = prt.getGlobalPlacement()
+            self.msh.Mesh=MeshPart.meshFromShape(Shape=shp,Fineness=2,SecondOrder=0,Optimize=1,AllowQuad=0)
+            del prt, shp
+
+            self.state0_trimesh = self.Meshobj_to_trimesh(self.doc.getObject(self.Mesh_obj_Name).Mesh)
+            self.doc = self.remove_old_shape_result_mesh(name=self.Mesh_obj_Name)
+        
+        self.doc = self.remove_old_mesh_result_mesh(name=self.Mesh_obj_Name)
+        return self.doc, self.state0_trimesh, self.Mesh_obj_Name, self.mesh_OK
+
+    def checkMesh(self,msh): # IMPORTANT : msh type is msh.Mesh!
+        mesh_OK = True
+        invalid_points = Mesh.Mesh.hasInvalidPoints(msh)
+        has_manifolds = Mesh.Mesh.hasNonManifolds(msh)
+        orient_faces = Mesh.Mesh.hasNonUniformOrientedFacets(msh)
+        self_intersect = Mesh.Mesh.hasSelfIntersections(msh)
+        
+        if (invalid_points) or (has_manifolds) or (orient_faces) or (self_intersect):
+            mesh_OK = False
+            print("--------")
+            print(f"invalid_points: {invalid_points}, has_manifolds: {has_manifolds}, orient_faces: {orient_faces}, self_intersect: {self_intersect}")
+            print("--------")
+            print("     XXX Mesh is not healthy!  XXX ")
+        else:
+            print("     +++ Mesh is healthy!  +++ ")    
+
+        return mesh_OK
+
+
+    def Meshobj_to_trimesh(self,mesh_obj):
+        v,f = mesh_obj.Topology
+        mytrimesh = trimesh.Trimesh(vertices=v,faces=f)
+        return mytrimesh
+    
+    def remove_old_femmesh(self):
+        femmesh_list = self.doc.findObjects("Fem::FemMeshShapeNetgenObject")
+        if femmesh_list:
+            self.doc.removeObject(femmesh_list[0].Name)
+            self.doc.recompute()
+            print("old femmesh is removed...")
+        return self.doc
+
+    def remove_old_shape_result_mesh(self,name="Mesh001"):
+        shape_result_mesh = self.doc.getObject(name)
+        if shape_result_mesh:
+            self.doc.removeObject(shape_result_mesh.Name)
+            print("shape result mesh is removed...")
+        return self.doc
+
+    def remove_old_mesh_result_mesh(self,name="Mesh"):
+        mesh_result_mesh = self.doc.getObject(name)
+        if mesh_result_mesh:
+            self.doc.removeObject(mesh_result_mesh.Name)
+            print("mesh result mesh is removed...")
+        return self.doc 
+
+    def list_doc_objects(self):
+        print('---------------------------')
+        for obj_ in self.doc.Objects:
+            print(f'{obj_.Name},    --> {type(obj_)}')
+        print('---------------------------')
+
+    def document_setup(self):
+        self.doc = self.add_ref_object() 
+        self.doc = self.create_analysis()
+        self.doc = self.add_solver()
+        self.doc = self.add_material()
+
+        self.doc = self.create_constraint_fixed()
+        self.doc = self.create_constraint_force()
+        return self.doc
+
+    
+    def add_ref_object(self): 
+        # ref object is needed to keep the constraints dependencies (for clearning the doc)
+        # and use this refBox for normal directions (initialize the constraints)
+        box_obj = self.doc.addObject('Part::Box', 'RefBox')
+        box_obj.Height = 1
+        box_obj.Width = 1
+        box_obj.Length = 1
+        return self.doc    
+
+    def create_analysis(self):
+        analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
+        return self.doc
+    
+    def add_solver(self):
+        self.doc.Analysis.addObject(ObjectsFem.makeSolverCalculixCcxTools(self.doc))
+        return self.doc
+
+    
+    def add_material(self,selected_material='steel'):
+        PET = {'Name': 'PET', 'YoungsModulus': '3150 MPa' ,'PoissonRatio': '0.36', 'Density': '1380 kg/m^3'}
+        STEEL = {'Name' : 'Steel-Generic','YoungsModulus': '210000 MPa','PoissonRatio': '0.30','Density': '7900 kg/m^3'}
+
+        material_object = ObjectsFem.makeMaterialSolid(self.doc, "SolidMaterial")
+        mat = material_object.Material
+        
+        if selected_material=='PET':
+            mat['Name'] = PET['Name']
+            mat['YoungsModulus'] = PET['YoungsModulus']
+            mat['PoissonRatio'] = PET['PoissonRatio']
+            mat['Density'] = PET['Density']    
+        else:    
+            mat['Name'] = STEEL['Name']
+            mat['YoungsModulus'] = STEEL['YoungsModulus']
+            mat['PoissonRatio'] = STEEL['PoissonRatio']
+            mat['Density'] = STEEL['Density']
+        
+                
+        material_object.Material = mat
+        self.doc.Analysis.addObject(material_object)
+        return self.doc
+
+    def create_constraint_fixed(self):
+        self.doc.addObject("Fem::ConstraintFixed","FemConstraintFixed")
+        self.doc.FemConstraintFixed.Scale = 1
+        self.doc.FemConstraintFixed.References = [(self.doc.RefBox,"Face2"), (self.doc.RefBox,"Face1")]
+        self.doc.Analysis.addObject(self.doc.FemConstraintFixed)
+        self.doc.recompute()
+        return self.doc
+
+    def create_constraint_force(self):
+        self.doc.addObject("Fem::ConstraintForce","FemConstraintForce")
+        self.doc.FemConstraintForce.Force = 8000
+        self.doc.FemConstraintForce.Direction = (self.doc.RefBox,["Face6"])# **** direction Z axis
+        self.doc.FemConstraintForce.Reversed = False
+        self.doc.FemConstraintForce.Scale = 1
+        self.doc.FemConstraintForce.References = [(self.doc.RefBox,"Face6")]
+        self.doc.Analysis.addObject(self.doc.FemConstraintForce)
+        self.doc.recompute()
+        return self.doc
+
+    def save_state(self):
+        now = str(datetime.datetime.now())
+        sav = "_"+now.replace("-","").replace(" ","").replace(":","").replace(".","")
+        
+        state_info = f"{self.initMesh_Name}_{self.force_position}_{self.force_val}"
+        print(f"state_info : {state_info}")
+        saved_filename = f"{sav}.obj"
+        self.save_trimesh(self.result_trimesh,self.save_path,saved_filename)
+        
+        row_data = [f"{self.initMesh_Name}.obj",self.force_position,self.force_val,saved_filename]
+        
+        self.add_to_excel_file(row_data,xls_file=self.xls_filename,xls_pth=self.xls_pth)
+
+    
+    def add_to_excel_file(self,row_data,xls_file,xls_pth):
+
+        xls_obj = os.path.join(xls_pth,xls_file)
+        
+        if(row_data):
+            if not os.path.exists(xls_obj):
+                wbook = Workbook()
+            else:
+                wbook = openpyxl.load_workbook(xls_obj)
+                
+            wsheet = wbook.worksheets[0]
+            wsheet.append(row_data)    
+            wbook.save(xls_obj)
+
+    def save_trimesh(self,mytrimesh, pth ,saved_filename):
+        file_obj = os.path.join(pth,saved_filename)
+        mytrimesh.export(file_obj)
+        print(f'file is saved: {file_obj}')
+    
+    def generate_complete_meshes_scene(self,trimesh_scene_meshes):
+        x,y,z = trimesh_scene_meshes[0].center_mass
+    #     x,y,z = np.array(solid.Shape.BoundBox.Center)
+            
+        camera_new_pose = np.array([
+                [ 0.70710678,  0.0        ,  0.70710678,     x],
+                [ 0.70710678,  0.0        ,  0.70710678,     y+60],
+                [ 0.0       , -1.0        ,  0.0       ,     z],
+                [ 0.0       ,  0.0        ,  0.0       ,     1.0]
+                ])
+
+        mesh_scene = trimesh.Scene(trimesh_scene_meshes)
+        mesh_scene.camera_transform = camera_new_pose
+        return mesh_scene
+    
+    def create_shape_femmesh_gmsh(self): # femmesh using gmsh - not integrated yet # To Do 
+        femmesh_obj = ObjectsFem.makeMeshGmsh(self.doc, "GMSH"+"_202105_initBox")
+        femmesh_obj.Part = self.doc.Solid
+        self.doc.recompute()
+        gmsh_mesh = gt(femmesh_obj)
+        error = gmsh_mesh.create_mesh()
+        print(error)
+
+        self.doc.Analysis.addObject(femmesh_obj)
+        
+    def reset_env(self):
+        self.doc = self.remove_old_femmesh()
+        self.doc = self.clear_constraints()
+        self.doc = self.remove_old_solid()
+        
+        keep_objs=['RefBox','Analysis','SolidMaterial','FemConstraintForce','FemConstraintFixed','CalculiXccxTools']
+        
+        for objct in self.doc.Objects:
+            if not objct.Name in keep_objs:
+                print(f'removed: {objct.Name}')
+                self.doc.removeObject(objct.Name)
+        
+        del self.trimesh_scene_meshes
+        self.trimesh_scene_meshes = []
+        del self.constraint_scene_meshes
+        self.constraint_scene_meshes = []
+        
+        self.fail = False
+        self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
+        if not self.mesh_OK: print('*** init mesh is not acceptable!')
+        self.trimesh_scene_meshes.append(self.state0_trimesh)
+    
+    def view_all_states(self):
+        i=0
+        final_scene = []
+        for mm in self.trimesh_scene_meshes:
+            center = [i*11, 0, 0]
+            mm.apply_translation(center)
+            final_scene.append(mm) 
+            i+=1
+        return final_scene
