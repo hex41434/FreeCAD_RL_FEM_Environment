@@ -72,7 +72,7 @@ class FreeCADWrapper(object):
 
             def create_fem_analysis(self):
 
-        self.force_position, self.force_val = self.generate_action()
+        (self.force_position, self.force_val) = self.generate_action()
 
         print(f"force position : {self.force_position}\n")
 
@@ -100,6 +100,7 @@ class FreeCADWrapper(object):
             # self.force_val = 180000
             # self.force_val = random.randrange(2500, 10000, 500)
             self.force_val = random.randrange(250000, 300000, 500)#STEEL
+            self.action = (self.force_position, self.force_val)
             return self.force_position, self.force_val
     
     def fem_step(self,mesh_decimation=True):
@@ -658,6 +659,8 @@ class FreeCADWrapper(object):
         self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
+        
+        return self.state0_trimesh
     
     def view_all_states(self):
         i=0
