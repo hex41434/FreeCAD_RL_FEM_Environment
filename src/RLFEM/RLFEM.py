@@ -3,53 +3,41 @@ import sys
 
 import numpy as np
 import gym
+# import gymnasium as gym
+# from gymnasium import spaces
 
 from .FreeCADWrapper import FreeCADWrapper
 
 
 class RLFEM(gym.Env):
-    """Environment allowing to interact with the FreeCad simulation.
-
+    """Environment allowing to interact with the FreeCad simulation
     TODO: more description
     """
+    #metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
     def __init__(self,
-                 path=None,
-                 force_value=None,
-                 force_factor=None,
-                 num_actions=None,
-                 flag_save=None,
-                 action_type=None,
-                 max_triangles=None,
-                 flag_elong=None,
-                 num_bins=None,
-                 num_cs=None,
-                 obj_dim_h=None,
-                 obj_dim_w=None,
-                 obj_dim_l=None,
-                 try_crash_num=5):
+                 render_mode=None,
+                 save_path,
+                 loaded_mesh_path,
+                 loaded_mesh_filename,
+                 view_meshes,
+                 xls_pth,
+                 xls_filename,
+                 load_3d=True):
         """
         :param path: path to the .ply file.
         """
 
-        self.interface = FreeCADWrapper(path=path,
-                                        force_value=force_value,
-                                        force_factor=force_factor,
-                                        num_actions=num_actions,
-                                        flag_save=flag_save,
-                                        action_type=action_type,
-                                        max_triangles=max_triangles,
-                                        flag_elong=flag_elong,
-                                        num_bins=num_bins,
-                                        num_cs=num_cs,
-                                        obj_dim_h=obj_dim_h,
-                                        obj_dim_w=obj_dim_w,
-                                        obj_dim_l=obj_dim_l
-                                        )
+        self.interface = FreeCADWrapper(
+                 save_path,
+                 loaded_mesh_path,
+                 loaded_mesh_filename,
+                 view_meshes,
+                 xls_pth,
+                 xls_filename,
+                 load_3d=True)
 
-        super().__init__()  # TODO: could this line be called before interface super(RLFEM, self).__init__()
-
-        self.try_crash_num = try_crash_num
+        super().__init__()  # TODO: could this line be called before interface super(RLFEM, self).__init__() ???
 
         self.state = self.reset()
 
@@ -58,12 +46,7 @@ class RLFEM(gym.Env):
 
         :returns: the initial state.
         """
-        self.interface.clear_doc()
-        self.interface.initialize_doc()
-        # Initial state
-        # self.state = self.interface.reset()
-
-        return 'self.state'
+        return self.reset_env()
 
     def step(self, action):
         """Takes an action in the environment and returns a new state, a reward, a boolean (True for terminal states)
@@ -73,14 +56,19 @@ class RLFEM(gym.Env):
 
         :returns: (next_state, reward, done, info)
         """
-        region_values, force_dir_str = action
-        self.state = self.interface.run_step(self, region_values=region_values,
-                                             force_dir_str=force_dir_str)  # Random transition to another state
+        #region_values, force_dir_str = action
+        #(self.force_position, self.force_val) = self.generate_action()
+        
+        self.create_fem_analysis()
+        self.fem_step()
+        
         self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
+        #chamf = compute_trimesh_chamfer(gt_points, msh, offset=0, scale=1, num_mesh_samples=300000)
+        
         self.done = False  # Continuing task
         self.info = {}  # No info
 
-        return self.state, self.reward, self.done, self.info
+        return self.result_trimesh, self.reward, self.done
 
     def render(self, mode='human'):
         """Displays the current state of the environment.
@@ -88,12 +76,12 @@ class RLFEM(gym.Env):
         Can be text or video frames.
         """
 
-        print(self.state)
+        print(self.result_trimesh)# ?! current state?! #########
 
     def close(self):
         "To be called before exiting, to free resources."
         pass
 
     def random_action(self):
-        region_values, force_dir_str = self.interface.get_random_action()
-        return region_values, force_dir_str
+        (self.force_position, self.force_val) = self.generate_action()
+        return self.force_position, self.force_val
