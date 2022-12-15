@@ -3,6 +3,8 @@ import sys
 
 import numpy as np
 import gym
+from gym import spaces
+
 # import gymnasium as gym
 # from gymnasium import spaces
 
@@ -25,8 +27,9 @@ class RLFEM(gym.Env):
                  xls_filename,
                  load_3d=True):
         """
-        :param path: path to the .ply file.
+        :param path: path to the .obj file.
         """
+        super(RLFEM, self).__init__()
 
         self.interface = FreeCADWrapper(
                  save_path,
@@ -37,9 +40,8 @@ class RLFEM(gym.Env):
                  xls_filename,
                  load_3d=True)
 
-        super().__init__()  # TODO: could this line be called before interface super(RLFEM, self).__init__() ???
-
         self.state = self.reset()
+        self.action_space = spaces.Box(np.array([2,250000]),np.array([8,300000]))
 
     def reset(self):
         """Resets the environment and starts from an initial state.
