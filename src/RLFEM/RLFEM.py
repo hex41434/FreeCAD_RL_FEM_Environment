@@ -22,6 +22,7 @@ class RLFEM(gym.Env):
                  save_path,
                  loaded_mesh_path,
                  loaded_mesh_filename,
+                 gt_mesh_path,
                  view_meshes,
                  xls_pth,
                  xls_filename,
@@ -35,6 +36,7 @@ class RLFEM(gym.Env):
                  save_path,
                  loaded_mesh_path,
                  loaded_mesh_filename,
+                 gt_mesh_path,
                  view_meshes,
                  xls_pth,
                  xls_filename,
@@ -42,6 +44,8 @@ class RLFEM(gym.Env):
 
         self.state = self.reset()
         self.action_space = spaces.Box(np.array([2,250000]),np.array([8,300000]))
+        self.gt_mesh = trimesh.load_mesh('')
+        self.max_steps = 5
 
     def reset(self):
         """Resets the environment and starts from an initial state.
@@ -61,13 +65,21 @@ class RLFEM(gym.Env):
         #region_values, force_dir_str = action
         #(self.force_position, self.force_val) = self.generate_action()
         
-        self.create_fem_analysis()
+        self.create_fem_analysis(action)
         self.fem_step()
+        self.step_no +=1
         
-        self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
+        #self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
         #chamf = compute_trimesh_chamfer(gt_points, msh, offset=0, scale=1, num_mesh_samples=300000)
+        msh = self.result_trimesh
+        gt_points = self.gt_mesh
+        self.reward = compute_trimesh_chamfer(gt_points, msh, offset=0, scale=1, num_mesh_samples=300000)
         
-        self.done = False  # Continuing task
+        if self.step_no>=5: 
+            self.done = True
+        else:
+            self.done = False  # Continuing task
+        
         self.info = {}  # No info
 
         return self.result_trimesh, self.reward, self.done
@@ -84,6 +96,6 @@ class RLFEM(gym.Env):
         "To be called before exiting, to free resources."
         pass
 
-    def random_action(self):
-        (self.force_position, self.force_val) = self.generate_action()
-        return self.force_position, self.force_val
+#     def random_action(self):
+#         (self.force_position, self.force_val) = self.generate_action()
+#         return self.force_position, self.force_val
