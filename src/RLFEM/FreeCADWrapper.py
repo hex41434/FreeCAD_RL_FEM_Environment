@@ -80,7 +80,8 @@ class FreeCADWrapper(object):
         if not self.fem_ok: print('*** self.fem_ok is False!')
 
         self.doc , self.fixed_indx = self.set_constraint_fixed()
-        self.doc , self.force_indx = self.set_constraint_force_placement(force_position=self.force_position)    
+        self.doc , self.force_indx = self.set_constraint_force_placement(
+            force_position=self.force_position)    
                                                 
         if len(self.fixed_indx)==0 or len(self.force_indx)==0:
             print("force or fixed constraints are empty... no more analysis will be executed... ")
@@ -116,9 +117,11 @@ class FreeCADWrapper(object):
         self.result_trimesh = self.Meshobj_to_trimesh(self.out_mesh)
         if(mesh_decimation):
         # the mesh is needed to be simplified? 
-            self.result_trimesh, self.trimesh_topology = self.simplify_trimesh_result(self.result_trimesh)
+            self.result_trimesh, self.trimesh_topology = self.simplify_trimesh_result(
+                self.result_trimesh)
         else:
-            self.trimesh_topology = self.trimesh_to_mesh_topology(self.result_trimesh)
+            self.trimesh_topology = self.trimesh_to_mesh_topology(
+                self.result_trimesh)
             
         self.trimesh_scene_meshes.append(self.result_trimesh)
         
@@ -196,10 +199,17 @@ class FreeCADWrapper(object):
         m = pymeshlab.Mesh(trmesh.vertices, trmesh.faces)
         ms = pymeshlab.MeshSet()
         ms.add_mesh(m)
-        ms.simplification_quadric_edge_collapse_decimation(targetperc=.6,preservenormal=True,preservetopology=True)
+        ms.simplification_quadric_edge_collapse_decimation(
+            targetperc=.6,
+            preservenormal=True,
+            preservetopology=True)
+        
         m_ = ms.current_mesh()
         
-        result_trimesh_decimated = trimesh.Trimesh(vertices=m_.vertex_matrix(),faces=m_.face_matrix())
+        result_trimesh_decimated = trimesh.Trimesh(
+            vertices=m_.vertex_matrix(),
+            faces=m_.face_matrix())
+        
         ms.delete_current_mesh()
         trimesh_decimated_topology = self.trimesh_to_mesh_topology(result_trimesh_decimated)
         result_trimesh_decimated = self.set_trimesh_color(result_trimesh_decimated)
@@ -209,7 +219,11 @@ class FreeCADWrapper(object):
     def set_trimesh_color(self,mytrimesh):
         rand_color = trimesh.visual.color.random_color()    
         
-        cv = trimesh.visual.color.ColorVisuals(mesh=mytrimesh, face_colors=rand_color, vertex_colors=None)
+        cv = trimesh.visual.color.ColorVisuals(
+            mesh=mytrimesh, 
+            face_colors=rand_color, 
+            vertex_colors=None)
+        
         mytrimesh.visual = cv
         return mytrimesh
 
@@ -433,7 +447,8 @@ class FreeCADWrapper(object):
                 print(f'shape bounding box: {sh.BoundBox}')
                 del sh, obj
                 
-                self.state0_trimesh = self.Meshobj_to_trimesh(self.doc.getObject(self.Mesh_obj_Name).Mesh)
+                self.state0_trimesh = self.Meshobj_to_trimesh(
+                    self.doc.getObject(self.Mesh_obj_Name).Mesh)
                 self.doc = self.remove_old_shape_result_mesh(name="initShape")
         
         else:        
@@ -448,7 +463,12 @@ class FreeCADWrapper(object):
             prt = self.doc.getObject("Solid")
             shp = prt.Shape.copy(False)
             shp.Placement = prt.getGlobalPlacement()
-            self.msh.Mesh=MeshPart.meshFromShape(Shape=shp,Fineness=2,SecondOrder=0,Optimize=1,AllowQuad=0)
+            self.msh.Mesh=MeshPart.meshFromShape(
+                Shape=shp,
+                Fineness=2,
+                SecondOrder=0,
+                Optimize=1,
+                AllowQuad=0)
             del prt, shp
 
             self.state0_trimesh = self.Meshobj_to_trimesh(self.doc.getObject(self.Mesh_obj_Name).Mesh)
@@ -643,7 +663,12 @@ class FreeCADWrapper(object):
         self.doc = self.clear_constraints()
         self.doc = self.remove_old_solid()
         
-        keep_objs=['RefBox','Analysis','SolidMaterial','FemConstraintForce','FemConstraintFixed','CalculiXccxTools']
+        keep_objs=['RefBox',
+                   'Analysis',
+                   'SolidMaterial',
+                   'FemConstraintForce',
+                   'FemConstraintFixed',
+                   'CalculiXccxTools']
         
         for objct in self.doc.Objects:
             if not objct.Name in keep_objs:
