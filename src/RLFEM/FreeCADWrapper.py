@@ -66,16 +66,16 @@ class FreeCADWrapper(object):
         self.trimesh_scene_meshes = []
         self.constraint_scene_meshes = []
         self.view_meshes = view_meshes #True # for jupyter nb 
-
+        self.step_no = 0
         self.fail = False
         self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
 
-            def create_fem_analysis(self):
+    def create_fem_analysis(self,action):
 
-        (self.force_position, self.force_val) = self.generate_action()
-
+#         (self.force_position, self.force_val) = self.generate_action()
+        (self.force_position, self.force_val) = action
         print(f"force position : {self.force_position}\n")
 
         self.doc , self.fem_ok = self.create_shape_femmesh()    
@@ -686,7 +686,7 @@ class FreeCADWrapper(object):
         self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
-        
+        self.step_no = 0
         return self.state0_trimesh
     
     def view_all_states(self):
