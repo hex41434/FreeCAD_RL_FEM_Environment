@@ -46,6 +46,7 @@ class FreeCADWrapper(object):
             'save_path', 
             'loaded_mesh_path',
             'loaded_mesh_filename',
+            'gt_mesh_path',
             'view_meshes',
             'xls_pth',
             'xls_filename'}
@@ -56,6 +57,7 @@ class FreeCADWrapper(object):
         self.view_meshes = cfg['view_meshes']
         self.xls_pth = cfg['xls_pth']
         self.xls_filename = cfg['xls_filename']
+        self.gt_mesh_path = cfg['gt_mesh_path']
 
         self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
