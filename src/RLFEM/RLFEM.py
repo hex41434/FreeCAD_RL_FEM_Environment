@@ -4,11 +4,13 @@ import sys
 import numpy as np
 import gym
 from gym import spaces
+import trimesh
+from termcolor import colored
 
 # import gymnasium as gym
 # from gymnasium import spaces
 
-from .FreeCADWrapper import FreeCADWrapper
+from FreeCADWrapper import FreeCADWrapper
 
 
 class RLFEM(gym.Env):
@@ -18,7 +20,7 @@ class RLFEM(gym.Env):
     #metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
     def __init__(self,
-                 render_mode=None,
+                 render_modes,
                  save_path,
                  loaded_mesh_path,
                  loaded_mesh_filename,
@@ -26,13 +28,14 @@ class RLFEM(gym.Env):
                  view_meshes,
                  xls_pth,
                  xls_filename,
-                 load_3d=True):
+                 load_3d):
         """
         :param path: path to the .obj file.
         """
         super(RLFEM, self).__init__()
 
         self.interface = FreeCADWrapper(
+                 render_modes,
                  save_path,
                  loaded_mesh_path,
                  loaded_mesh_filename,
@@ -40,11 +43,12 @@ class RLFEM(gym.Env):
                  view_meshes,
                  xls_pth,
                  xls_filename,
-                 load_3d=True)
+                 load_3d)
 
         self.state = self.reset()
         self.action_space = spaces.Box(np.array([2,250000]),np.array([8,300000]))
-        self.gt_mesh = trimesh.load_mesh('')
+        self.observation_space = spaces.Discrete(2)
+        self.gt_mesh = trimesh.load_mesh(gt_mesh_path)
         self.max_steps = 5
 
     def reset(self):
@@ -52,7 +56,7 @@ class RLFEM(gym.Env):
 
         :returns: the initial state.
         """
-        return self.reset_env()
+        return self.interface.reset_env()
 
     def step(self, action):
         """Takes an action in the environment and returns a new state, a reward, a boolean (True for terminal states)
@@ -62,40 +66,38 @@ class RLFEM(gym.Env):
 
         :returns: (next_state, reward, done, info)
         """
-        #region_values, force_dir_str = action
-        #(self.force_position, self.force_val) = self.generate_action()
+
         
-        self.create_fem_analysis(action)
-        self.fem_step()
-        self.step_no +=1
+        self.interface.create_fem_analysis(action)
+        self.interface.fem_step()
+        self.interface.step_no +=1
+        print(colored(f'step- th:{self.interface.step_no}','green'))
         
-        #self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
+        self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
         #chamf = compute_trimesh_chamfer(gt_points, msh, offset=0, scale=1, num_mesh_samples=300000)
-        msh = self.result_trimesh
+        msh = self.interface.result_trimesh
         gt_points = self.gt_mesh
-        self.reward = compute_trimesh_chamfer(gt_points, msh, offset=0, scale=1, num_mesh_samples=300000)
+        # # self.reward = self.interface.compute_trimesh_chamfer(gt_points, msh)
         
-        if self.step_no>=5: 
+        print(colored(f'reward:{self.reward}','cyan'))
+        if self.interface.step_no>=5: 
             self.done = True
         else:
             self.done = False  # Continuing task
         
-        self.info = {}  # No info
+        self.info = 'empty'  # No info
 
-        return self.result_trimesh, self.reward, self.done
+        return self.interface.result_trimesh, self.reward, self.done, self.info
 
-    def render(self, mode='human'):
+    def render(self, mode='None'):
         """Displays the current state of the environment.
 
         Can be text or video frames.
         """
-
-        print(self.result_trimesh)# ?! current state?! #########
+        self.state = self.interface.result_trimesh
+        
+        print(colored(f'state_render:{self.state}', 'cyan'))
 
     def close(self):
         "To be called before exiting, to free resources."
         pass
-
-#     def random_action(self):
-#         (self.force_position, self.force_val) = self.generate_action()
-#         return self.force_position, self.force_val

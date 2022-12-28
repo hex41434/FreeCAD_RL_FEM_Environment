@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import cKDTree as KDTree
 import trimesh
 
-
+# Copyright 2004-present Facebook. All Rights Reserved.
 def compute_trimesh_chamfer(gt_points, gen_mesh, offset, scale, num_mesh_samples=30000):
     """
     This function computes a symmetric chamfer distance, i.e. the sum of both chamfers.

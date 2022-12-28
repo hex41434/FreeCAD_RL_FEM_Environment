@@ -26,6 +26,8 @@ import random
 import openpyxl
 from openpyxl import Workbook
 import yaml
+from scipy.spatial import cKDTree as KDTree
+from termcolor import colored
 
 
 class FreeCADWrapper(object):
@@ -34,7 +36,16 @@ class FreeCADWrapper(object):
     TODO: more description
     """
 
-    def __init__(self, **kwargs):
+    # def __init__(self, **kwargs):
+    def __init__(self, render_modes,
+                 save_path,
+                 loaded_mesh_path,
+                 loaded_mesh_filename,
+                 gt_mesh_path,
+                 view_meshes,
+                 xls_pth,
+                 xls_filename,
+                 load_3d):
         """
         Args:
             path: path to the .ply file.
@@ -49,33 +60,41 @@ class FreeCADWrapper(object):
             'gt_mesh_path',
             'view_meshes',
             'xls_pth',
-            'xls_filename'}
+            'xls_filename',
+            'render_mode',
+            'load_3d'}
 
         self.save_path = cfg['save_path']
         self.loaded_mesh_path = cfg['loaded_mesh_path']
         self.loaded_mesh_filename = cfg['loaded_mesh_filename']
+        self.gt_mesh_path = cfg['gt_mesh_path']
         self.view_meshes = cfg['view_meshes']
         self.xls_pth = cfg['xls_pth']
         self.xls_filename = cfg['xls_filename']
-        self.gt_mesh_path = cfg['gt_mesh_path']
+        self.render_mode = cfg['render_mode']
+        self.load_3d = cfg['load_3d']
 
-        self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
+        # self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
 
 
         self.doc = FreeCAD.newDocument('doc')
         self.trimesh_scene_meshes = []
         self.constraint_scene_meshes = []
         self.view_meshes = view_meshes #True # for jupyter nb 
+        self.doc = self.document_setup()
         self.step_no = 0
         self.fail = False
         self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
+        self.result_trimesh = self.state0_trimesh #init the current mesh ToDo....
 
     def create_fem_analysis(self,action):
 
 #         (self.force_position, self.force_val) = self.generate_action()
-        (self.force_position, self.force_val) = action
+        (f_p, f_v) = action
+        self.force_position = f_p.item() #np.folat32 to python float data type
+        self.force_val = f_v.item()
         print(f"force position : {self.force_position}\n")
 
         self.doc , self.fem_ok = self.create_shape_femmesh()    
@@ -144,7 +163,7 @@ class FreeCADWrapper(object):
         shp = Part.Solid(shp)
         solid = self.doc.addObject("Part::Feature","Solid")
         solid.Shape = shp
-
+        print('converted to solid...')
         self.doc.recompute()
 
     def clear_constraints(self):
@@ -355,7 +374,7 @@ class FreeCADWrapper(object):
         self.doc.FemConstraintForce.Reversed = True
         self.doc.FemConstraintForce.Scale = 1
         self.doc.recompute()
-        
+        print('force const done!')
         return self.doc, ref_indx
 
     def add_constraints_to_scene_meshes(self,constraint_indx,color,view_markers=True):
@@ -429,7 +448,7 @@ class FreeCADWrapper(object):
             print(f"\n ******* {self.loaded_mesh_filename} is loaded ******* \n")
             
             self.msh = self.doc.getObject(self.Mesh_obj_Name)
-            print(self.list_doc_objects())
+            self.list_doc_objects()
             self.mesh_OK = self.checkMesh(self.msh.Mesh) # important
             print(f'mesh_OK:{self.mesh_OK}')
             
@@ -607,7 +626,7 @@ class FreeCADWrapper(object):
         sav = "_"+now.replace("-","").replace(" ","").replace(":","").replace(".","")
         
         state_info = f"{self.initMesh_Name}_{self.force_position}_{self.force_val}"
-        print(f"state_info : {state_info}")
+        print(colored(f"state_info : {state_info}",'yellow'))
         saved_filename = f"{sav}.obj"
         self.save_trimesh(self.result_trimesh,self.save_path,saved_filename)
         
@@ -687,7 +706,9 @@ class FreeCADWrapper(object):
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
         self.step_no = 0
-        return self.state0_trimesh
+        print(f'step no:{self.step_no}')
+        # return self.state0_trimesh
+        return self.state0_trimesh.vertices[0][2] #Z
     
     def view_all_states(self):
         i=0
@@ -698,3 +719,33 @@ class FreeCADWrapper(object):
             final_scene.append(mm) 
             i+=1
         return final_scene
+
+    # Copyright 2004-present Facebook. All Rights Reserved.
+    def compute_trimesh_chamfer(gt_points, gen_mesh, offset=0, scale=1, num_mesh_samples=30000):
+        """
+        This function computes a symmetric chamfer distance, i.e. the sum of both chamfers.
+
+        gt_points: trimesh.points.PointCloud of just poins, sampled from the surface (see
+                compute_metrics.ply for more documentation)
+
+        gen_mesh: trimesh.base.Trimesh of output mesh from whichever autoencoding reconstruction
+                method (see compute_metrics.py for more)
+
+        """
+        gen_points_sampled = trimesh.sample.sample_surface(gen_mesh, num_mesh_samples)[0]
+        gen_points_sampled = gen_points_sampled / scale - offset
+
+        # only need numpy array of points
+        gt_points_np = gt_points.vertices
+
+        # one direction
+        gen_points_kd_tree = KDTree(gen_points_sampled)
+        one_distances, one_vertex_ids = gen_points_kd_tree.query(gt_points_np)
+        gt_to_gen_chamfer = np.mean(np.square(one_distances))
+
+        # other direction
+        gt_points_kd_tree = KDTree(gt_points_np)
+        two_distances, two_vertex_ids = gt_points_kd_tree.query(gen_points_sampled)
+        gen_to_gt_chamfer = np.mean(np.square(two_distances))
+        print(gt_to_gen_chamfer + gen_to_gt_chamfer)
+        return gt_to_gen_chamfer + gen_to_gt_chamfer
