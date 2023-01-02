@@ -1,7 +1,7 @@
 save_path: '../../scripts/meshsave_tmp/'
 loaded_mesh_path: '../../scripts/data/'
 loaded_mesh_filename: 'Fcad22_ver1.obj'
-gt_mesh_path: '../../scripts/data/_20221213121013416030.obj'
+gt_mesh_path: '../../scripts/data/_20221228160432643663.obj'
 view_meshes: 'True'
 xls_pth: '../../scripts/data/'
 xls_filename: 'state_actions_2023.xlsx'

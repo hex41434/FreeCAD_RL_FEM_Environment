@@ -28,7 +28,8 @@ from openpyxl import Workbook
 import yaml
 from scipy.spatial import cKDTree as KDTree
 from termcolor import colored
-
+# import pyrender
+# os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
@@ -94,7 +95,7 @@ class FreeCADWrapper(object):
 #         (self.force_position, self.force_val) = self.generate_action()
         (f_p, f_v) = action
         self.force_position = f_p.item() #np.folat32 to python float data type
-        self.force_val = f_v.item()
+        self.force_val = f_v.item()*50000
         print(f"force position : {self.force_position}\n")
 
         self.doc , self.fem_ok = self.create_shape_femmesh()    
@@ -628,7 +629,7 @@ class FreeCADWrapper(object):
         state_info = f"{self.initMesh_Name}_{self.force_position}_{self.force_val}"
         print(colored(f"state_info : {state_info}",'yellow'))
         saved_filename = f"{sav}.obj"
-        self.save_trimesh(self.result_trimesh,self.save_path,saved_filename)
+        # self.save_trimesh(self.result_trimesh,self.save_path,saved_filename)
         
         row_data = [f"{self.initMesh_Name}.obj",self.force_position,self.force_val,saved_filename]
         
@@ -708,7 +709,9 @@ class FreeCADWrapper(object):
         self.step_no = 0
         print(f'step no:{self.step_no}')
         # return self.state0_trimesh
-        return self.state0_trimesh.vertices[0][2] #Z
+        # return self.state0_trimesh.vertices[0][2]) #Z
+        randi = np.random.randint(low = 1, high=255, size=(55, 23, 3), dtype=np.uint8)
+        return randi
     
     def view_all_states(self):
         i=0
@@ -749,3 +752,23 @@ class FreeCADWrapper(object):
         gen_to_gt_chamfer = np.mean(np.square(two_distances))
         print(gt_to_gen_chamfer + gen_to_gt_chamfer)
         return gt_to_gen_chamfer + gen_to_gt_chamfer
+
+    def make_observation(trmsh):
+        camera_pres = pyrender.PerspectiveCamera(yfov=np.pi / 3.0)
+        s = np.sqrt(2)/2
+        camera_pres_pose_top = np.array([
+        [s, 0.0, s, 5.0],
+        [0.0, 1.0, 0.0, 2.0],
+        [s, 0.0, s, 10],
+        [0.0, 0.0, 0.0, 1.0],
+        ])
+                
+        mish = pyrender.Mesh.from_trimesh(trmsh)
+        prscene = pyrender.Scene(ambient_light=np.array([1.0, 1.0, 1.0, 1.0]))
+        prscene.add(camera_pres,pose=camera_pres_pose_top)
+        prscene.add(mish)
+        
+        r = pyrender.OffscreenRenderer(viewport_width=640,viewport_height=480,point_size=1.0)
+        img,dpth = r.render(prscene)
+        
+        return img, dpth

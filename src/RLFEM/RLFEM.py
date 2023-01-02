@@ -7,8 +7,6 @@ from gym import spaces
 import trimesh
 from termcolor import colored
 
-# import gymnasium as gym
-# from gymnasium import spaces
 
 from FreeCADWrapper import FreeCADWrapper
 
@@ -46,10 +44,12 @@ class RLFEM(gym.Env):
                  load_3d)
 
         self.state = self.reset()
-        self.action_space = spaces.Box(np.array([2,250000]),np.array([8,300000]))
-        self.observation_space = spaces.Discrete(2)
+        # self.action_space = spaces.Box(np.array([2,450000]),np.array([8,800000]))
+        self.action_space = spaces.Box(np.array([2,4]),np.array([8,80]))
+        self.observation_space = spaces.Box(low=0, high=255, shape=(55, 23, 3), dtype=np.uint8)
+        
         self.gt_mesh = trimesh.load_mesh(gt_mesh_path)
-        self.max_steps = 5
+        self.max_steps = 3
 
     def reset(self):
         """Resets the environment and starts from an initial state.
@@ -74,28 +74,29 @@ class RLFEM(gym.Env):
         print(colored(f'step- th:{self.interface.step_no}','green'))
         
         self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
-        #chamf = compute_trimesh_chamfer(gt_points, msh, offset=0, scale=1, num_mesh_samples=300000)
-        msh = self.interface.result_trimesh
-        gt_points = self.gt_mesh
+        
+        # msh = self.interface.result_trimesh
+        # gt_points = self.gt_mesh
         # # self.reward = self.interface.compute_trimesh_chamfer(gt_points, msh)
         
         print(colored(f'reward:{self.reward}','cyan'))
-        if self.interface.step_no>=5: 
+        if self.interface.step_no>=self.max_steps: 
             self.done = True
         else:
             self.done = False  # Continuing task
         
-        self.info = 'empty'  # No info
+        self.info = {"info" : str(self.state)}
+  
 
-        return self.interface.result_trimesh, self.reward, self.done, self.info
+        randi = np.random.randint(low = 1, high = 255, size=(55, 23, 3), dtype=np.uint8)  # Random state(observation)
+        # return self.interface.result_trimesh, self.reward, self.done, self.info
+        return randi, self.reward, self.done, self.info
 
     def render(self, mode='None'):
         """Displays the current state of the environment.
-
         Can be text or video frames.
         """
-        self.state = self.interface.result_trimesh
-        
+        self.state =self.interface.state0_trimesh.vertices[0][2]
         print(colored(f'state_render:{self.state}', 'cyan'))
 
     def close(self):
