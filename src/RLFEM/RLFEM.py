@@ -1,4 +1,6 @@
 import os
+os.environ["PYOPENGL_PLATFORM"] = "egl"
+import pyrender
 import sys
 
 import numpy as np
@@ -45,8 +47,9 @@ class RLFEM(gym.Env):
 
         self.state = self.reset()
         # self.action_space = spaces.Box(np.array([2,450000]),np.array([8,800000]))
-        self.action_space = spaces.Box(np.array([2,4]),np.array([8,80]))
-        self.observation_space = spaces.Box(low=0, high=255, shape=(55, 23, 3), dtype=np.uint8)
+        self.action_space = spaces.Box(np.array([2,4]),np.array([8,30]))
+        # self.observation_space = spaces.Box(low=0, high=255, shape=(55, 23, 3), dtype=np.uint8)
+        self.observation_space = spaces.Box(low=0, high=255, shape=(23, 55, 3), dtype=np.uint8)
         
         self.gt_mesh = trimesh.load_mesh(gt_mesh_path)
         self.max_steps = 3
@@ -67,11 +70,11 @@ class RLFEM(gym.Env):
         :returns: (next_state, reward, done, info)
         """
 
-        
         self.interface.create_fem_analysis(action)
-        self.interface.fem_step()
+        self.inp_filepath = self.interface.fem_step()
+        print(f'=o=o=o=o=o=o=o{self.inp_filepath}')
         self.interface.step_no +=1
-        print(colored(f'step- th:{self.interface.step_no}','green'))
+        print(colored(f'step_no- th:{self.interface.step_no}','green'))
         
         self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
         
@@ -88,16 +91,18 @@ class RLFEM(gym.Env):
         self.info = {"info" : str(self.state)}
   
 
-        randi = np.random.randint(low = 1, high = 255, size=(55, 23, 3), dtype=np.uint8)  # Random state(observation)
-        # return self.interface.result_trimesh, self.reward, self.done, self.info
-        return randi, self.reward, self.done, self.info
+        # randi = np.random.randint(low = 1, high = 255, size=(55, 23, 3), dtype=np.uint8)  # Random state(observation)
+        # return randi, self.reward, self.done, self.info
+        print(f"+ . + . + . + . observation_image_size:{self.interface.im_observation.size}")
+        return self.interface.im_observation, self.reward, self.done, self.info
 
-    def render(self, mode='None'):
+    def render(self, mode='rgb_array'):
         """Displays the current state of the environment.
         Can be text or video frames.
         """
-        self.state =self.interface.state0_trimesh.vertices[0][2]
-        print(colored(f'state_render:{self.state}', 'cyan'))
+        # self.state = self.interface.state0_trimesh.vertices[0][2]
+        # print(colored(f'state_render:{self.state}', 'cyan'))
+        return self.interface.im_observation
 
     def close(self):
         "To be called before exiting, to free resources."

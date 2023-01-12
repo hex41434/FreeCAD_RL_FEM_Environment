@@ -85,7 +85,7 @@ class my_rl_env():
     
     def fem_step(self,mesh_decimation=True):
 
-        self.doc, self.fem_volume = self.run_analysis()
+        self.doc, self.fem_volume,self.inp_path = self.run_analysis()
         print(f".....................................fem_volume:{self.fem_volume}")
         if not self.fem_volume: print("fem_volume is not OK...")
 
@@ -105,6 +105,7 @@ class my_rl_env():
         self.save_state()
         self.prepare_for_next_fem_step()
         # self.list_doc_objects()
+        return self.inp_path
 
     def prepare_for_next_fem_step(self):
         self.doc = self.remove_old_femmesh()
@@ -203,6 +204,8 @@ class my_rl_env():
         if not message:
             fea.purge_results()
             fea.write_inp_file()
+            print(f'=o=o=o=o= INP FILE PATH: {fea.inp_file_name}')
+            self.inp_file = fea.inp_file_name
             fea.ccx_run()
             fea.load_results()
             self.fem_volume=True
@@ -210,7 +213,7 @@ class my_rl_env():
         else:
             self.fem_volume=False
             print("problem occurred! {}\n".format(message))  # in python console
-        return self.doc, self.fem_volume
+        return self.doc, self.fem_volume, self.inp_file
 
     def create_mesh_from_result(self):
         out_mesh = []

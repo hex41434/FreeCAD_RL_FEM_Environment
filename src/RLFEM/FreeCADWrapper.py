@@ -1,6 +1,7 @@
 import os
+os.environ["PYOPENGL_PLATFORM"] = "egl"
+import pyrender
 import sys
-
 import pymeshlab
 conda_active_path = sys.exec_prefix
 # conda_active_path = os.environ["CONDA_PREFIX"]
@@ -21,15 +22,14 @@ from femtools import ccxtools
 from femmesh.gmshtools import GmshTools as gt
 import trimesh
 import numpy as np
-import datetime
+import datetime as dt
 import random
 import openpyxl
 from openpyxl import Workbook
 import yaml
 from scipy.spatial import cKDTree as KDTree
 from termcolor import colored
-# import pyrender
-# os.environ["PYOPENGL_PLATFORM"] = "egl"
+from PIL import Image
 
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
@@ -89,6 +89,8 @@ class FreeCADWrapper(object):
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
         self.result_trimesh = self.state0_trimesh #init the current mesh ToDo....
+        self.im_observation = np.asarray(Image.open('/scratch/aifa/MyRepo/RL_FEM/gym_RLFEM/FreeCAD_RL_FEM_Environment/scripts/data/Fcad22_ver1.png'))
+        print(f"+ . + . + . + . observation_image_size:{self.im_observation.size}")
 
     def create_fem_analysis(self,action):
 
@@ -102,8 +104,7 @@ class FreeCADWrapper(object):
         if not self.fem_ok: print('*** self.fem_ok is False!')
 
         self.doc , self.fixed_indx = self.set_constraint_fixed()
-        self.doc , self.force_indx = self.set_constraint_force_placement(
-            force_position=self.force_position)    
+        self.doc , self.force_indx = self.set_constraint_force_placement(force_position=self.force_position)    
                                                 
         if len(self.fixed_indx)==0 or len(self.force_indx)==0:
             print("force or fixed constraints are empty... no more analysis will be executed... ")
@@ -117,18 +118,18 @@ class FreeCADWrapper(object):
         self.doc = self.set_constraint_force_value(self.force_val)
 
     def generate_action(self):
-            
-            # self.force_position = np.random.randint(20,80)
-            self.force_position = np.random.randint(2,8)
-            # self.force_val = 180000
-            # self.force_val = random.randrange(2500, 10000, 500)
-            self.force_val = random.randrange(250000, 300000, 500)#STEEL
-            self.action = (self.force_position, self.force_val)
-            return self.force_position, self.force_val
+            pass
+            # # self.force_position = np.random.randint(20,80)
+            # self.force_position = np.random.randint(2,8)
+            # # self.force_val = 180000
+            # # self.force_val = random.randrange(2500, 10000, 500)
+            # self.force_val = random.randrange(250000, 300000, 500)#STEEL
+            # self.action = (self.force_position, self.force_val)
+            # return self.force_position, self.force_val
     
     def fem_step(self,mesh_decimation=True):
 
-        self.doc, self.fem_volume = self.run_analysis()
+        self.doc, self.fem_volume,self.inp_path = self.run_analysis()
         print(f".....................................fem_volume:{self.fem_volume}")
         if not self.fem_volume: print("fem_volume is not OK...")
 
@@ -147,9 +148,10 @@ class FreeCADWrapper(object):
             
         self.trimesh_scene_meshes.append(self.result_trimesh)
         
-        self.save_state()
+        self.new_state = self.save_state()
         self.prepare_for_next_fem_step()
         # self.list_doc_objects()
+        return self.inp_path
 
     def prepare_for_next_fem_step(self):
         self.doc = self.remove_old_femmesh()
@@ -259,6 +261,8 @@ class FreeCADWrapper(object):
         if not message:
             fea.purge_results()
             fea.write_inp_file()
+            print(f'=o=o=o=o= INP FILE PATH: {fea.inp_file_name}')
+            self.inp_file = fea.inp_file_name
             fea.ccx_run()
             fea.load_results()
             self.fem_volume=True
@@ -266,7 +270,7 @@ class FreeCADWrapper(object):
         else:
             self.fem_volume=False
             print("problem occurred! {}\n".format(message))  # in python console
-        return self.doc, self.fem_volume
+        return self.doc, self.fem_volume, self.inp_file
 
     def create_mesh_from_result(self):
         out_mesh = []
@@ -350,7 +354,7 @@ class FreeCADWrapper(object):
         else:
             length_min = solid.Shape.BoundBox.XMin
             length_max = solid.Shape.BoundBox.XMax
-            safety = 2
+            safety = 1
 
             start = length_min+safety if force_position<length_min+safety else (force_position - region)
             end = length_max-safety if force_position>length_max-safety else (force_position + region)
@@ -362,11 +366,11 @@ class FreeCADWrapper(object):
 
                 if find_x <=end and find_x>=start : 
                     find_face = solid.Shape.Faces[i]
-                    u,v = find_face.Surface.parameter(find_face.CenterOfMass)
-                    nrml = find_face.normalAt(u,v)
-                    if nrml.dot(vec) >= 0.75:
-                        ref_list.append((solid, f"Face{i+1}"))
-                        ref_indx.append(i) 
+                    # u,v = find_face.Surface.parameter(find_face.CenterOfMass)
+                    # nrml = find_face.normalAt(u,v)
+                    # if nrml.dot(vec) >= 0.75:
+                    ref_list.append((solid, f"Face{i+1}"))
+                    ref_indx.append(i) 
 
         print(f'num of faces as force constraints: {len(ref_list)}')
         self.doc.FemConstraintForce.References  = ref_list
@@ -449,7 +453,7 @@ class FreeCADWrapper(object):
             print(f"\n ******* {self.loaded_mesh_filename} is loaded ******* \n")
             
             self.msh = self.doc.getObject(self.Mesh_obj_Name)
-            self.list_doc_objects()
+            # self.list_doc_objects()
             self.mesh_OK = self.checkMesh(self.msh.Mesh) # important
             print(f'mesh_OK:{self.mesh_OK}')
             
@@ -511,9 +515,9 @@ class FreeCADWrapper(object):
             print("--------")
             print(f"invalid_points: {invalid_points}, has_manifolds: {has_manifolds}, orient_faces: {orient_faces}, self_intersect: {self_intersect}")
             print("--------")
-            print("     XXX Mesh is not healthy!  XXX ")
+            print(colored("     XXX Mesh is not healthy!  XXX ",'red'))
         else:
-            print("     +++ Mesh is healthy!  +++ ")    
+            print(colored("     +++ Mesh is healthy!  +++ ",'green'))    
 
         return mesh_OK
 
@@ -623,17 +627,23 @@ class FreeCADWrapper(object):
         return self.doc
 
     def save_state(self):
-        now = str(datetime.datetime.now())
-        sav = "_"+now.replace("-","").replace(" ","").replace(":","").replace(".","")
+        sav = "_"+dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         
         state_info = f"{self.initMesh_Name}_{self.force_position}_{self.force_val}"
         print(colored(f"state_info : {state_info}",'yellow'))
-        saved_filename = f"{sav}.obj"
+        saved_filename = f"{sav}_step_{self.step_no}.obj"
         # self.save_trimesh(self.result_trimesh,self.save_path,saved_filename)
+        colored_result_mesh = self.trimesh_to_color_depth(self.result_trimesh)
+        rgbimg, depth_img = self.make_observation(colored_result_mesh)
+        self.im_observation = Image.fromarray(rgbimg).resize([64,48]).crop(box=[5,15,60,38])
+        # self.im_observation.save(os.path.join(self.save_path,f'{sav}.png'))
+        self.im_observation = np.asarray(self.im_observation)
+        print(f"+=+=++=+=+=+=+=+= observation_image_size:{self.im_observation.size}")
         
         row_data = [f"{self.initMesh_Name}.obj",self.force_position,self.force_val,saved_filename]
         
         self.add_to_excel_file(row_data,xls_file=self.xls_filename,xls_pth=self.xls_pth)
+        return self.im_observation
 
     
     def add_to_excel_file(self,row_data,xls_file,xls_pth):
@@ -710,8 +720,10 @@ class FreeCADWrapper(object):
         print(f'step no:{self.step_no}')
         # return self.state0_trimesh
         # return self.state0_trimesh.vertices[0][2]) #Z
-        randi = np.random.randint(low = 1, high=255, size=(55, 23, 3), dtype=np.uint8)
-        return randi
+        # randi = np.random.randint(low = 1, high=255, size=(55, 23, 3), dtype=np.uint8)
+        # return randi
+        print(f"+ . + . + . + . observation_image_size:{self.im_observation.size}")
+        return self.im_observation
     
     def view_all_states(self):
         i=0
@@ -753,7 +765,7 @@ class FreeCADWrapper(object):
         print(gt_to_gen_chamfer + gen_to_gt_chamfer)
         return gt_to_gen_chamfer + gen_to_gt_chamfer
 
-    def make_observation(trmsh):
+    def make_observation(self,trmsh):
         camera_pres = pyrender.PerspectiveCamera(yfov=np.pi / 3.0)
         s = np.sqrt(2)/2
         camera_pres_pose_top = np.array([
@@ -770,5 +782,14 @@ class FreeCADWrapper(object):
         
         r = pyrender.OffscreenRenderer(viewport_width=640,viewport_height=480,point_size=1.0)
         img,dpth = r.render(prscene)
-        
+        print(f"============={img.size}")
         return img, dpth
+    
+    def trimesh_to_color_depth(self,trmsh):
+        kaf = np.array(trmsh.vertices)
+        kaf[:,2]=0
+
+        radii = np.linalg.norm(trmsh.vertices - kaf, axis=1)
+        cmap = ['jet' ,'viridis']
+        trmsh.visual.vertex_colors = trimesh.visual.interpolate(radii, color_map=cmap[0])
+        return trmsh
