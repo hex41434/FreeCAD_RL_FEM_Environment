@@ -196,7 +196,7 @@ class my_rl_env():
 
     def run_analysis(self):
 
-        fea = ccxtools.FemToolsCcx()
+        fea = ccxtools.FemToolsCcx1()
         fea.update_objects()
         fea.setup_working_dir()
         fea.setup_ccx()
