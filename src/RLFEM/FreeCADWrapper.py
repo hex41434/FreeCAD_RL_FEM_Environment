@@ -30,7 +30,7 @@ import yaml
 from scipy.spatial import cKDTree as KDTree
 from termcolor import colored
 from PIL import Image
-
+import fileinput
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
 
@@ -75,61 +75,179 @@ class FreeCADWrapper(object):
         self.render_mode = cfg['render_mode']
         self.load_3d = cfg['load_3d']
 
-        # self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None))
+        # self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None)) TODO
 
 
         self.doc = FreeCAD.newDocument('doc')
         self.trimesh_scene_meshes = []
         self.constraint_scene_meshes = []
-        self.view_meshes = view_meshes #True # for jupyter nb 
+        self.view_meshes = view_meshes #True # for jupyter nb TODO
+        self.inp_dir = os.path.join(os.getcwd(),'my_inp_folder')
+        self.inpfile = 'FEMMeshNetgen.inp'
         self.doc = self.document_setup()
+        self.fea = ccxtools.FemToolsCcx()
         self.step_no = 0
-        self.fail = False
-        self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
+        self.fail = False #TODO 
+        self.doc, self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_state()
+        # self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
-        self.result_trimesh = self.state0_trimesh #init the current mesh ToDo....
+        self.result_trimesh = self.state0_trimesh #init the current mesh TODO....
         self.im_observation = np.asarray(Image.open('/scratch/aifa/MyRepo/RL_FEM/gym_RLFEM/FreeCAD_RL_FEM_Environment/scripts/data/Fcad22_ver1.png'))
         print(f"+ . + . + . + . observation_image_size:{self.im_observation.size}")
+        
+
 
     def create_fem_analysis(self,action):
-
-#         (self.force_position, self.force_val) = self.generate_action()
-        (f_p, f_v) = action
-        self.force_position = f_p.item() #np.folat32 to python float data type
-        self.force_val = f_v.item()*50000
-        print(f"force position : {self.force_position}\n")
-
-        self.doc , self.fem_ok = self.create_shape_femmesh()    
-        if not self.fem_ok: print('*** self.fem_ok is False!')
-
-        self.doc , self.fixed_indx = self.set_constraint_fixed()
-        self.doc , self.force_indx = self.set_constraint_force_placement(force_position=self.force_position)    
-                                                
-        if len(self.fixed_indx)==0 or len(self.force_indx)==0:
-            print("force or fixed constraints are empty... no more analysis will be executed... ")
+        self.action = action
+        #update femmesh coordinates
+        self.doc, self.new_Nodes = self.uptade_femmesh() 
+        #clear last ccxResults
+        self.fea.purge_results()
         
-        self.fixed_scene = self.add_constraints_to_scene_meshes(self.fixed_indx,color='blue')
-        self.force_scene = self.add_constraints_to_scene_meshes(self.force_indx,color='red')
-        self.constraint_scene_meshes.append(self.concat_meshes(self.fixed_scene,self.force_scene))
-        self.doc = self.remove_old_shape_result_mesh()
-        self.doc = self.remove_old_mesh_result_mesh()
+        #write inp file 
+        self.write_updated_inp_for_fea()
         
-        self.doc = self.set_constraint_force_value(self.force_val)
+        # TODO needed?
+        # self.fixed_scene = []#self.add_constraints_to_scene_meshes(self.fixed_indx,color='blue')
+        # self.force_scene = []#self.add_constraints_to_scene_meshes(self.force_indx,color='red')
+        # self.constraint_scene_meshes.append(self.concat_meshes(self.fixed_scene,self.force_scene))
 
+    def run_ccx_updated_inp(self):
+        cc = self.fea.ccx_run()
+        print(cc)
+        self.fea.load_results()
+        return self.doc, self.fea
+    
+    def write_updated_inp_for_fea(self):
+        self.prepare_inp_node_block()
+        self.update_inp_file('Nodes')
+        self.prepare_inp_cload_block()
+        self.update_inp_file(BLOCK='CLOAD')
+        
+    def prepare_inp_node_block(self):
+        with open(os.path.join(self.inp_dir,"Nodes_Volumes.txt"), "w") as text_file_nodes:
+            ccx_float_format = "{:.13E}".format    
+            for nd in self.new_Nodes:
+                write_str = f'{nd[0]}, {ccx_float_format(nd[1])},{ccx_float_format(nd[2])},{ccx_float_format(nd[3])}\n'
+                text_file_nodes.write(write_str)
+            
+            text_file_nodes.write('\n\n') 
+    
+    # prepare force constraint for inp file format
+    def prepare_inp_cload_block(self):
+        Fx, Fy, frc = self.action
+        frc = "{:.13E}".format(frc)
+        region = 1.5
+        print(frc,Fx,Fy)
+        with open(os.path.join(self.inp_dir,"ConstForce.txt"), "w") as text_file_force:
+            for it in self.doc.FEMMeshNetgen.FemMesh.Nodes.items():
+                # if np.ceil(it[1].x) == Fx and np.ceil(it[1].y) == Fy:
+                if np.ceil(it[1].x) >= Fx-region and np.ceil(it[1].x) <= Fx+region and np.ceil(it[1].y) >= Fy-region and np.ceil(it[1].y) <= Fy+region:
+                    write_str = f'{it[0]},3,{frc}\n'
+                    text_file_force.write(write_str)
+                    print('CLOAD TRUE...')
+            
+            text_file_force.write('\n\n***********************************************************\n')#end of block  
+    
+    def update_inp_file(self,BLOCK):
+        if BLOCK=='Nodes':
+            #NODES
+            HEAD = '*Node, NSET=Nall'
+            # TAIL = '** Define element set Eall'
+            TAIL ='** Volume elements'
+            
+        elif BLOCK=='CLOAD':
+
+            #CLOAD
+            HEAD = '** node loads on shape:'
+            TAIL = '** Outputs --> frd file'
+            
+        self.create_head_tail_files(HEAD,TAIL,BLOCK)    
+        self.insert_inp_blocks(HEAD,TAIL,BLOCK) 
+    
+    def insert_inp_blocks(self,HEAD,TAIL,BLOCK):              
+        inp_dir = self.inp_dir
+        inpfile = self.inpfile
+        cwd = os.getcwd()
+        os.chdir(inp_dir)
+            
+        if BLOCK=='Nodes':
+            block_file = 'Nodes_Volumes.txt' 
+            file_list = ['head_nodes.txt', block_file, 'tail_nodes.txt']
+        elif BLOCK=='CLOAD':
+            block_file = 'ConstForce.txt'   
+            file_list = ['head_cload.txt', block_file, 'tail_cload.txt']
+            
+        
+        with open(os.path.join(inp_dir,inpfile), 'w') as file:
+            input_lines = fileinput.input(file_list)
+            file.writelines(input_lines)
+        os.chdir(cwd)
+        
+    def create_head_tail_files(self,HEAD,TAIL,BLOCK): # HEAD:included, TAIL:excluded
+        inp_dir = self.inp_dir
+        inpfile = self.inpfile
+        
+        ln = 0
+        start_line = 0
+        end_line = 0
+        if BLOCK=='Nodes':
+            with open(os.path.join(inp_dir,inpfile),"r") as fin, open(os.path.join(inp_dir,'head_nodes.txt'),"w") as fout_head, open(os.path.join(inp_dir,'tail_nodes.txt'),"w") as fout_tail:
+                for line in fin:
+                    ln = ln+1
+                    if start_line==0:
+                        fout_head.write(line)
+                        if HEAD in line:
+                            start_line = ln
+                    
+                    if TAIL in line: #TAIL is excluded
+                            end_line = ln-1
+                    
+                    if end_line!=0:
+                        fout_tail.write(line)
+        
+        if BLOCK=='CLOAD':
+            with open(os.path.join(inp_dir,inpfile),"r") as fin, open(os.path.join(inp_dir,'head_cload.txt'),"w") as fout_head, open(os.path.join(inp_dir,'tail_cload.txt'),"w") as fout_tail:
+                for line in fin:
+                    ln = ln+1
+                    if start_line==0:
+                        fout_head.write(line)
+                        if HEAD in line:
+                            start_line = ln
+                    
+                    if TAIL in line: #TAIL is excluded
+                            end_line = ln-1
+                    
+                    if end_line!=0:
+                        fout_tail.write(line)
+                        
+        
     def generate_action(self):
-            pass
-            # # self.force_position = np.random.randint(20,80)
-            # self.force_position = np.random.randint(2,8)
+            self.force_position = np.random.randint(20,80)
             # # self.force_val = 180000
             # # self.force_val = random.randrange(2500, 10000, 500)
             # self.force_val = random.randrange(250000, 300000, 500)#STEEL
-            # self.action = (self.force_position, self.force_val)
-            # return self.force_position, self.force_val
+            # self.action = (self.force_position_x, self.force_position_y, self.force_val)
+            # return self.force_position_x, self.force_position_y, self.force_val
+            
+    def uptade_femmesh(self):
+        self.new_Nodes = []
+        res_coord = self.doc.CCX_Results.DisplacementVectors
+        res_nd_no = self.doc.CCX_Results.NodeNumbers
+        res_mesh = self.doc.ResultMesh.FemMesh
+        for n in res_nd_no: #add Nodes
+            nx = (res_mesh.Nodes[n].x + res_coord[n-1].x)
+            ny = (res_mesh.Nodes[n].y + res_coord[n-1].y)
+            nz = (res_mesh.Nodes[n].z + res_coord[n-1].z)
+            #node ids starts from 1 
+            self.new_Nodes.append((n,nx,ny,nz))
+        
+        return self.doc,self.new_Nodes        
     
     def fem_step(self,mesh_decimation=True):
 
-        self.doc, self.fem_volume,self.inp_path = self.run_analysis()
+        self.doc, self.fem_volume,self.inp_path = ''
         print(f".....................................fem_volume:{self.fem_volume}")
         if not self.fem_volume: print("fem_volume is not OK...")
 
@@ -154,12 +272,17 @@ class FreeCADWrapper(object):
         return self.inp_path
 
     def prepare_for_next_fem_step(self):
-        self.doc = self.remove_old_femmesh()
-        self.doc = self.clear_constraints()
-        self.doc = self.remove_old_solid()
+        # self.doc = self.remove_old_femmesh()
+        # self.doc = self.clear_constraints()
+        # self.doc = self.remove_old_solid()
 
-        self.doc = self.create_shape_from_mesh(self.trimesh_topology) 
-        self.convert_to_solid()
+        # self.doc = self.create_shape_from_mesh(self.trimesh_topology) 
+        # self.convert_to_solid()
+        
+        
+        trmsh_result = self.resultmesh_to_trimesh()
+        
+        return trmsh_result
         
     def convert_to_solid(self):        
         shp = self.doc.Mesh001.Shape
@@ -170,8 +293,8 @@ class FreeCADWrapper(object):
         self.doc.recompute()
 
     def clear_constraints(self):
-        self.doc.FemConstraintFixed.References = [(self.doc.RefBox,["Face6"])]
-        self.doc.FemConstraintForce.References = [(self.doc.RefBox,["Face6"])]
+        self.doc.FemConstraintFixed.References = [(self.doc.Solid,["Face6"])]
+        self.doc.FemConstraintForce.References = [(self.doc.Solid,["Face6"])]
         self.doc.FemConstraintForce.Direction = None
         
         self.doc.recompute()
@@ -251,9 +374,9 @@ class FreeCADWrapper(object):
         mytrimesh.visual = cv
         return mytrimesh
 
-    def run_analysis(self):
+    def run_analysis(self): #start from state 0 - only called in the beginning 
 
-        fea = ccxtools.FemToolsCcx()
+        fea=self.fea
         fea.update_objects()
         fea.setup_working_dir()
         fea.setup_ccx()
@@ -442,7 +565,65 @@ class FreeCADWrapper(object):
             print("ERRR - no femmesh is created!")    
         return self.doc, self.fem_ok    
     
-    def init_shape(self,load_3d=True): # create state0 - load a 3d mesh or create a cuboid
+    def init_state(self):
+        
+        self.state0_trimesh = []
+        self.mesh_OK = True
+        
+        Solid_obj = self.doc.addObject("Part::Box", "Solid")
+        Solid_obj.Height = 2
+        Solid_obj.Width = 5
+        Solid_obj.Length = 100
+        self.initMesh_Name = "initBox"
+        
+        self.doc, self.fem_ok = self.create_shape_femmesh()
+        
+        self.doc = self.create_constraint_fixed()
+        self.doc = self.create_constraint_force()
+        
+        self.list_doc_objects() 
+        fea1=self.fea
+        fea1.update_objects()
+        fea1.setup_working_dir(self.inp_dir) #-----> fea.setup_working_dir('YourOwnSpecialInputFilePath')
+        
+        fea1.setup_ccx()
+        message = fea1.check_prerequisites()
+        if not message:
+            fea1.purge_results()
+            fea1.write_inp_file()
+            cc = fea1.ccx_run()
+            print(f'cc:{cc}')
+            print(f'+o+o+o+o+o+o+ .inp filename {fea1.inp_file_name}')
+            fea1.load_results()
+        else:
+            FreeCAD.Console.PrintError("Oh, we have a problem! {}\n".format(message))  # in report view
+            print("Oh, we have a problem! {}\n".format(message))  # in python console
+
+
+        trmsh0 = self.resultmesh_to_trimesh()
+        self.state0_trimesh = trmsh0
+        return self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK # 2 last objs needed?!
+        
+    def Meshobj_to_trimesh(out_mesh):
+        v,f = out_mesh.Topology
+        mytrimesh = trimesh.Trimesh(vertices=v,faces=f)
+        return mytrimesh
+
+    def resultmesh_to_trimesh(self):
+        femmesh_obj = self.doc.getObject('ResultMesh').FemMesh
+        result = self.doc.getObject('CCX_Results')
+
+        out = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result)
+        out_mesh = Mesh.Mesh(out)
+
+        trmsh = self.Meshobj_to_trimesh(out_mesh)
+        del out, out_mesh
+        
+        saved_filename = f"_step_{self.step_no}.obj"
+        self.save_trimesh(trmsh,self.save_path,saved_filename)
+        return trmsh
+
+    def init_shape(self,load_3d=False): # create state0 - load a 3d mesh or create a cuboid TODO 
         self.state0_trimesh = []
         self.mesh_OK = True
         if load_3d:
@@ -475,9 +656,9 @@ class FreeCADWrapper(object):
                 
                 self.state0_trimesh = self.Meshobj_to_trimesh(
                     self.doc.getObject(self.Mesh_obj_Name).Mesh)
-                self.doc = self.remove_old_shape_result_mesh(name="initShape")
+                self.doc = self.remove_old_shape_result_mesh(name="initShape")# remove initshape
         
-        else:        
+        else:       
             Solid_obj = self.doc.addObject("Part::Box", "Solid")
             Solid_obj.Height = 2
             Solid_obj.Width = 5
@@ -556,13 +737,11 @@ class FreeCADWrapper(object):
         print('---------------------------')
 
     def document_setup(self):
-        self.doc = self.add_ref_object() 
+        # self.doc = self.add_ref_object() 
         self.doc = self.create_analysis()
         self.doc = self.add_solver()
         self.doc = self.add_material()
 
-        self.doc = self.create_constraint_fixed()
-        self.doc = self.create_constraint_force()
         return self.doc
 
     
@@ -610,18 +789,18 @@ class FreeCADWrapper(object):
     def create_constraint_fixed(self):
         self.doc.addObject("Fem::ConstraintFixed","FemConstraintFixed")
         self.doc.FemConstraintFixed.Scale = 1
-        self.doc.FemConstraintFixed.References = [(self.doc.RefBox,"Face2"), (self.doc.RefBox,"Face1")]
+        self.doc.FemConstraintFixed.References = [(self.doc.Solid,"Face5")] #bottom surface
         self.doc.Analysis.addObject(self.doc.FemConstraintFixed)
         self.doc.recompute()
         return self.doc
 
     def create_constraint_force(self):
         self.doc.addObject("Fem::ConstraintForce","FemConstraintForce")
-        self.doc.FemConstraintForce.Force = 8000
-        self.doc.FemConstraintForce.Direction = (self.doc.RefBox,["Face6"])# **** direction Z axis
+        self.doc.FemConstraintForce.Force = 1
+        self.doc.FemConstraintForce.Direction = (self.doc.Solid,["Face6"])# **** direction Z axis
         self.doc.FemConstraintForce.Reversed = False
         self.doc.FemConstraintForce.Scale = 1
-        self.doc.FemConstraintForce.References = [(self.doc.RefBox,"Face6")]
+        self.doc.FemConstraintForce.References = [(self.doc.Solid,"Face6")]
         self.doc.Analysis.addObject(self.doc.FemConstraintForce)
         self.doc.recompute()
         return self.doc
@@ -695,7 +874,7 @@ class FreeCADWrapper(object):
         self.doc = self.clear_constraints()
         self.doc = self.remove_old_solid()
         
-        keep_objs=['RefBox',
+        keep_objs=['Solid',
                    'Analysis',
                    'SolidMaterial',
                    'FemConstraintForce',
@@ -713,7 +892,7 @@ class FreeCADWrapper(object):
         self.constraint_scene_meshes = []
         
         self.fail = False
-        self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
+        self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_state()
         if not self.mesh_OK: print('*** init mesh is not acceptable!')
         self.trimesh_scene_meshes.append(self.state0_trimesh)
         self.step_no = 0

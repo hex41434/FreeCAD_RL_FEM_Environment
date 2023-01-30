@@ -136,3 +136,6 @@ dmypy.json
 *.pickle
 *.out
 *.png
+/my_inp_files
+/scripts/inp_test
+/src/RLFEM/my_inp_folder
