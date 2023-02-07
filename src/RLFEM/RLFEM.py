@@ -45,10 +45,9 @@ class RLFEM(gym.Env):
                  xls_filename,
                  load_3d)
 
-        self.state = self.reset()
-        # self.action_space = spaces.Box(np.array([2,450000]),np.array([8,800000]))
+        
+        self.state = self.reset() #self.state is the image observation
         self.action_space = spaces.Box(low=20, high=80, shape=(1, 3), dtype=np.uint8)
-        # self.observation_space = spaces.Box(low=0, high=255, shape=(55, 23, 3), dtype=np.uint8)
         self.observation_space = spaces.Box(low=0, high=255, shape=(23, 55, 3), dtype=np.uint8)
         
         self.gt_mesh = trimesh.load_mesh(gt_mesh_path) #TODO
@@ -71,11 +70,17 @@ class RLFEM(gym.Env):
         """
 
         self.interface.create_fem_analysis(action)
-        self.doc, self.fea = self.interface.run_ccx_updated_inp()
-        
-        self.state = self.interface.prepare_for_next_fem_step()
-        
+        self.interface.doc, self.interface.fea,self.interface.fem_ok = self.interface.run_ccx_updated_inp()
+        if not self.interface.fem_ok: # I should jump out... TODO 
+            print('X - X - X - X -X - X -X - X - FEM not OK')
+            
+        # self.state = self.interface.prepare_for_next_fem_step()
+        self.interface.result_trimesh,result_FCmesh = self.interface.resultmesh_to_trimesh()
+        self.new_state = self.interface.save_state()
+        self.interface.doc, self.interface.new_Nodes = self.interface.update_femmesh()
         self.interface.step_no +=1
+        self.interface.mesh_OK = self.interface.checkMesh(result_FCmesh)
+        
         print(colored(f'step_no- th:{self.interface.step_no}','green'))
         
         self.reward = np.random.uniform(0, 1, 1)[0]  # Random reward
@@ -85,8 +90,9 @@ class RLFEM(gym.Env):
         # # self.reward = self.interface.compute_trimesh_chamfer(gt_points, msh)
         
         print(colored(f'reward:{self.reward}','cyan'))
-        if self.interface.step_no>=self.max_steps: 
+        if self.interface.step_no>=self.max_steps or not self.interface.mesh_OK: 
             self.done = True
+            print(f'mesh quality: {self.interface.mesh_OK}')
         else:
             self.done = False  # Continuing task
         
@@ -100,8 +106,6 @@ class RLFEM(gym.Env):
         """Displays the current state of the environment.
         Can be text or video frames.
         """
-        # self.state = self.interface.state0_trimesh.vertices[0][2]
-        # print(colored(f'state_render:{self.state}', 'cyan'))
         return self.interface.im_observation
 
     def close(self):
