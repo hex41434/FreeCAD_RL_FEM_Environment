@@ -2,7 +2,7 @@ import os
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 import pyrender
 import sys
-import pymeshlab
+# import pymeshlab
 conda_active_path = sys.exec_prefix
 # conda_active_path = os.environ["CONDA_PREFIX"]
 sys.path.append(os.path.join(conda_active_path, "lib"))
@@ -36,7 +36,6 @@ class FreeCADWrapper(object):
 
     TODO: more description
     """
-
     # def __init__(self, **kwargs):
     def __init__(self, render_modes,
                  save_path,
@@ -76,48 +75,41 @@ class FreeCADWrapper(object):
         self.load_3d = cfg['load_3d']
 
         # self.__dict__.update((k, v) for k, v in kwargs.items() if (k in allowed_keys) and not (v is None)) TODO
-
-
-        self.doc = FreeCAD.newDocument('doc')
+        
+        # for visualizing the fem constraints on the mesh
         self.trimesh_scene_meshes = []
         self.constraint_scene_meshes = []
         self.view_meshes = view_meshes #True # for jupyter nb TODO
+        
         self.inp_dir = os.path.join(os.getcwd(),'my_inp_folder')
         self.inpfile = 'FEMMeshNetgen.inp'
-        self.doc = self.document_setup()
-        self.fea = ccxtools.FemToolsCcx()
-        self.fail = False #TODO 
-        self.doc, self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_state()
-        self.result_trimesh = self.state0_trimesh
-        # self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_shape(self.load_3d)
-        if not self.mesh_OK: print('*** init mesh is not acceptable!')
-        self.trimesh_scene_meshes.append(self.state0_trimesh)
-        self.im_observation = np.asarray(Image.open('/scratch/aifa/MyRepo/RL_FEM/gym_RLFEM/FreeCAD_RL_FEM_Environment/scripts/data/Fcad22_ver1.png'))
-        print(f"+ . + . + . + . observation_image_size:{self.im_observation.size}")
+         
+        self.doc, self.state0_trimesh,self.mesh_OK = self.document_setup()
         
-
+        if not self.mesh_OK: print('*** init mesh is not acceptable!') 
+        self.trimesh_scene_meshes.append(self.state0_trimesh)
+        
+        self.im_observation = []#np.asarray(Image.open('/scratch/aifa/MyRepo/RL_FEM/gym_RLFEM/FreeCAD_RL_FEM_Environment/scripts/data/Fcad22_ver1.png')) # TODO        
 
     def create_fem_analysis(self,action):
         self.action = action
-        #clear last ccxResults
+        #clear last ccxResults to run next fea
         self.fea.purge_results()
         #write inp file 
         self.write_updated_inp_for_fea()
-        
+        # 
         # TODO needed?
         # self.fixed_scene = []#self.add_constraints_to_scene_meshes(self.fixed_indx,color='blue')
         # self.force_scene = []#self.add_constraints_to_scene_meshes(self.force_indx,color='red')
         # self.constraint_scene_meshes.append(self.concat_meshes(self.fixed_scene,self.force_scene))
 
     def run_ccx_updated_inp(self):
-        
         cc = self.fea.ccx_run()
         print(cc)
         try:
             self.fea.load_results()
         except:
             self.fem_ok = False
-        
         return self.doc, self.fea ,self.fem_ok
     
     def write_updated_inp_for_fea(self):
@@ -147,7 +139,6 @@ class FreeCADWrapper(object):
                 # if np.ceil(it[1].x) >= Fx-region and np.ceil(it[1].x) <= Fx+region and np.ceil(it[1].y) >= Fy-region and np.ceil(it[1].y) <= Fy+region:
                     write_str = f'{it[0]},3,{frc}\n'
                     text_file_force.write(write_str)
-                    # print('CLOAD TRUE...')
             
             text_file_force.write('\n\n***********************************************************\n')#end of block  
     
@@ -222,7 +213,20 @@ class FreeCADWrapper(object):
                     
                     if end_line!=0:
                         fout_tail.write(line)
-            
+    
+    def reset_femmesh(self):
+        self.new_Nodes = []
+        
+        res_nd_no = self.res_nd_no_0
+        res_mesh = self.res_mesh_0 
+        for n in res_nd_no: #add Nodes
+            nx = (res_mesh.Nodes[n].x)
+            ny = (res_mesh.Nodes[n].y)
+            nz = (res_mesh.Nodes[n].z)
+            #node ids starts from 1 
+            self.new_Nodes.append((n,nx,ny,nz))
+        return self.doc,self.new_Nodes
+                
     def update_femmesh(self):
         self.new_Nodes = []
         res_coord = self.doc.CCX_Results.DisplacementVectors
@@ -236,46 +240,6 @@ class FreeCADWrapper(object):
             self.new_Nodes.append((n,nx,ny,nz))
         
         return self.doc,self.new_Nodes        
-
-    # def prepare_for_next_fem_step(self):
-        
-    #     self.result_trimesh = self.resultmesh_to_trimesh()
-    #     self.new_state = self.save_state()
-    #     self.doc, self.new_Nodes = self.update_femmesh()
-        
-    #     return self.result_trimesh
-
-    def clear_constraints(self):
-        self.doc.FemConstraintFixed.References = [(self.doc.Solid,["Face6"])]
-        self.doc.FemConstraintForce.References = [(self.doc.Solid,["Face6"])]
-        self.doc.FemConstraintForce.Direction = None
-        
-        self.doc.recompute()
-        print("FemConstraints cleared...")
-        return self.doc
-    
-    def remove_old_solid(self):
-        solid_result_mesh = self.doc.getObject("Solid")
-        if solid_result_mesh: 
-            self.doc.removeObject(solid_result_mesh.Name)
-            print("old solid result mesh is removed...")
-        else:
-            print("there is no solid object to be removed... ")
-        
-        self.doc.recompute()    
-        return self.doc
-        
-    
-    def create_shape_from_mesh(self,mesh_topology):    
-        
-        self.doc.addObject("Part::Feature","Mesh001")
-        shape = Part.Shape()
-        shape.makeShapeFromMesh(mesh_topology,0.100000)
-        self.doc.getObject("Mesh001").Shape = shape
-        self.doc.getObject("Mesh001").purgeTouched()
-        
-        print("shape from mesh done...")
-        return self.doc
 
     def trimesh_to_mesh_topology(self,result_trimesh):
         vecs = [] 
@@ -294,74 +258,6 @@ class FreeCADWrapper(object):
 
         result_trimesh_topology = (vecs , fcs)
         return result_trimesh_topology
-        
-    # def simplify_trimesh_result(self,trmesh):
-    #     m = pymeshlab.Mesh(trmesh.vertices, trmesh.faces)
-    #     ms = pymeshlab.MeshSet()
-    #     ms.add_mesh(m)
-    #     ms.simplification_quadric_edge_collapse_decimation(
-    #         targetperc=.6,
-    #         preservenormal=True,
-    #         preservetopology=True)
-        
-    #     m_ = ms.current_mesh()
-        
-    #     result_trimesh_decimated = trimesh.Trimesh(
-    #         vertices=m_.vertex_matrix(),
-    #         faces=m_.face_matrix())
-        
-    #     ms.delete_current_mesh()
-    #     trimesh_decimated_topology = self.trimesh_to_mesh_topology(result_trimesh_decimated)
-    #     result_trimesh_decimated = self.set_trimesh_color(result_trimesh_decimated)
-
-    #     return result_trimesh_decimated,trimesh_decimated_topology
-
-    def set_trimesh_color(self,mytrimesh):
-        rand_color = trimesh.visual.color.random_color()    
-        
-        cv = trimesh.visual.color.ColorVisuals(
-            mesh=mytrimesh, 
-            face_colors=rand_color, 
-            vertex_colors=None)
-        
-        mytrimesh.visual = cv
-        return mytrimesh
-
-    def run_analysis(self): #start from state 0 - only called in the beginning 
-
-        fea=self.fea
-        fea.update_objects()
-        fea.setup_working_dir()
-        fea.setup_ccx()
-        message = fea.check_prerequisites()
-        if not message:
-            fea.purge_results()
-            fea.write_inp_file()
-            print(f'=o=o=o=o= INP FILE PATH: {fea.inp_file_name}')
-            self.inp_file = fea.inp_file_name
-            fea.ccx_run()
-            fea.load_results()
-            self.fem_volume=True
-            print("Analysis done successfully...")
-        else:
-            self.fem_volume=False
-            print("problem occurred! {}\n".format(message))  # in python console
-        return self.doc, self.fem_volume, self.inp_file
-
-    def create_mesh_from_result(self):
-        out_mesh = []
-        femmesh_result = self.doc.getObject("ResultMesh").FemMesh
-        ccx_result = self.doc.getObject("CCX_Results")
-        try:
-            out = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_result, ccx_result)
-            out_mesh = Mesh.Mesh(out)
-            Mesh.show(out_mesh)
-            print("mesh_out is converted to mesh...")
-            self.doc.recompute()
-        except:
-            print("result can not be converted to mesh!")
-            
-        return self.doc, out_mesh
 
     def add_constraints_to_scene_meshes(self,constraint_indx,color,view_markers=True):
         
@@ -410,7 +306,8 @@ class FreeCADWrapper(object):
         femmesh_obj.SecondOrder = False
         femmesh_obj.Optimize = False
         femmesh_obj.MaxSize = .5
-        femmesh_obj.Shape = self.doc.Solid # create femmesh from object named:Solid
+        # create femmesh from object named:Solid
+        femmesh_obj.Shape = self.doc.Solid 
         try:
             self.doc.recompute()
         except:
@@ -423,53 +320,7 @@ class FreeCADWrapper(object):
             self.fem_ok = False
             print("ERRR - no femmesh is created!")    
         return self.doc, self.fem_ok    
-    
-    def init_state(self):
-        # to create mesh from our initial state, we need a fem step with force==.001
-        self.state0_trimesh = []
-        self.mesh_OK = True
-        self.step_no = 0
-        self.action = []
-        
-        Solid_obj = self.doc.addObject("Part::Box", "Solid")
-        Solid_obj.Height = 2
-        Solid_obj.Width = 3
-        Solid_obj.Length = 10
-        self.initMesh_Name = "initBox"
-        
-        self.doc, self.fem_ok = self.create_shape_femmesh()
-        
-        self.doc = self.create_constraint_fixed()
-        self.doc = self.create_constraint_force()
-        
-        self.list_doc_objects() 
-        fea1=self.fea
-        fea1.update_objects()
-        #-----> fea.setup_working_dir('YourOwnSpecialInputFilePath')
-        fea1.setup_working_dir(self.inp_dir) 
-        
-        fea1.setup_ccx()
-        message = fea1.check_prerequisites()
-        if not message:
-            fea1.purge_results()
-            fea1.write_inp_file()
-            cc = fea1.ccx_run()
-            print(f'cc:{cc}')
-            print(f'+o+o+o+o+o+o+ .inp filename {fea1.inp_file_name}')
-            fea1.load_results()
-        else:
-            FreeCAD.Console.PrintError("Oh, we have a problem! {}\n".format(message))  # in report view
-            print("Oh, we have a problem! {}\n".format(message))  # in python console
-
-        self.state0_trimesh,_ = self.resultmesh_to_trimesh()
-        self.result_trimesh = self.state0_trimesh
-        # self.save_state()
-        
-        #update femmesh coordinates
-        self.doc, self.new_Nodes = self.update_femmesh()
-        
-        return self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK # 2 last objs needed?!
-        
+  
     def Meshobj_to_trimesh(self,out_mesh):
         v,f = out_mesh.Topology
         mytrimesh = trimesh.Trimesh(vertices=v,faces=f)
@@ -478,10 +329,8 @@ class FreeCADWrapper(object):
     def resultmesh_to_trimesh(self):
         femmesh_obj = self.doc.getObject('ResultMesh').FemMesh
         result = self.doc.getObject('CCX_Results')
-
         out = femmesh.femmesh2mesh.femmesh_2_mesh(femmesh_obj, result)
         out_mesh = Mesh.Mesh(out)
-
         trmsh = self.Meshobj_to_trimesh(out_mesh)
         del out
         
@@ -505,47 +354,70 @@ class FreeCADWrapper(object):
 
         return mesh_OK
 
-
-    # def Meshobj_to_trimesh(self,mesh_obj):
-    #     v,f = mesh_obj.Topology
-    #     mytrimesh = trimesh.Trimesh(vertices=v,faces=f)
-    #     return mytrimesh
-    
-    def remove_old_femmesh(self):
-        femmesh_list = self.doc.findObjects("Fem::FemMeshShapeNetgenObject")
-        if femmesh_list:
-            self.doc.removeObject(femmesh_list[0].Name)
-            self.doc.recompute()
-            print("old femmesh is removed...")
-        return self.doc
-
-    def remove_old_shape_result_mesh(self,name="Mesh001"):
-        shape_result_mesh = self.doc.getObject(name)
-        if shape_result_mesh:
-            self.doc.removeObject(shape_result_mesh.Name)
-            print("shape result mesh is removed...")
-        return self.doc
-
-    def remove_old_mesh_result_mesh(self,name="Mesh"):
-        mesh_result_mesh = self.doc.getObject(name)
-        if mesh_result_mesh:
-            self.doc.removeObject(mesh_result_mesh.Name)
-            print("mesh result mesh is removed...")
-        return self.doc 
-
     def list_doc_objects(self):
         print('---------------------------')
         for obj_ in self.doc.Objects:
             print(f'{obj_.Name},    --> {type(obj_)}')
         print('---------------------------')
 
-    def document_setup(self):
-        # self.doc = self.add_ref_object() 
+    def document_setup(self): 
+        self.doc = FreeCAD.newDocument('doc')
         self.doc = self.create_analysis()
         self.doc = self.add_solver()
         self.doc = self.add_material()
+        
+        self.fea = ccxtools.FemToolsCcx()
+        self.fail = False
+        
+        # to create mesh from our initial state, we need a fem step with a very small force
+        self.state0_trimesh = []
+        self.mesh_OK = True
+        self.step_no = 0
+        self.action = (0,0,0)
+        
+        self.load_3d=False # TODO?!
+        if(not self.load_3d):
+            Solid_obj = self.doc.addObject("Part::Box", "Solid")
+            Solid_obj.Height = 2
+            Solid_obj.Width = 3
+            Solid_obj.Length = 10
+        
+        self.doc, self.fem_ok = self.create_shape_femmesh()
+        
+        self.doc = self.create_constraint_fixed()
+        self.doc = self.create_constraint_force()
+        
+        self.list_doc_objects() 
+        
+        fea1=self.fea
+        fea1.update_objects()
+        fea1.setup_working_dir(self.inp_dir) 
+        
+        fea1.setup_ccx()
+        message = fea1.check_prerequisites()
+        if not message:
+            fea1.purge_results()
+            fea1.write_inp_file()
+            cc = fea1.ccx_run()
+            print(f'cc:{cc}')
+            print(f'+o+o+o+o+o+o+ .inp filename {fea1.inp_file_name}')
+            fea1.load_results()
+        else:
+            print("Oh, we have a problem! {}\n".format(message))  # in python console
 
-        return self.doc
+        # i need to keep the state0 and the initial femmesh (femmesh0) --> (for reset function)
+        self.state0_trimesh,self.result_FCmesh = self.resultmesh_to_trimesh() 
+        self.result_trimesh = self.state0_trimesh
+        self.res_nd_no_0 = self.doc.CCX_Results.NodeNumbers
+        self.res_mesh_0 = self.doc.ResultMesh.FemMesh
+        self.old_state_name = 'Mesh0.obj'
+        
+        # self.save_state() -> only needed once to write Mesh0.obj file 
+        
+        # we need to keep the mesh fixed -> manually update the node coordinates in inp file 
+        self.update_femmesh()
+        
+        return self.doc ,self.state0_trimesh, self.mesh_OK # 2 last objs needed?!
 
     def create_analysis(self):
         analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
@@ -555,7 +427,6 @@ class FreeCADWrapper(object):
         self.doc.Analysis.addObject(ObjectsFem.makeSolverCalculixCcxTools(self.doc))
         return self.doc
 
-    
     def add_material(self,selected_material='PET'):
         PET = {'Name': 'PET', 'YoungsModulus': '3150 MPa' ,'PoissonRatio': '0.36', 'Density': '1380 kg/m^3'}
         STEEL = {'Name' : 'Steel-Generic','YoungsModulus': '210000 MPa','PoissonRatio': '0.30','Density': '7900 kg/m^3'}
@@ -599,23 +470,19 @@ class FreeCADWrapper(object):
         return self.doc
 
     def save_state(self):
-        sav = "_"+dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp_ = "_"+dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        state_info = f"{self.initMesh_Name}_{self.action}"
-        print(colored(f"state_info : {state_info}",'yellow'))
-        saved_filename = f"{sav}_step_{self.step_no}.obj"
-        self.save_trimesh(self.result_trimesh,self.save_path,saved_filename)
-        colored_result_mesh = self.trimesh_to_color_depth(self.result_trimesh)
-        rgbimg, depth_img = self.make_observation(colored_result_mesh)
-        self.im_observation = Image.fromarray(rgbimg).resize([64,48]).crop(box=[5,15,60,38])
-        # self.im_observation.save(os.path.join(self.save_path,f'{sav}.png'))
-        self.im_observation = np.asarray(self.im_observation)
-        print(f"+=+=++=+=+=+=+=+= observation_image_size:{self.im_observation.size}")
-        
-        # row_data = [f"{self.initMesh_Name}.obj",self.action,saved_filename]
-        # self.add_to_excel_file(row_data,xls_file=self.xls_filename,xls_pth=self.xls_pth)
-        return self.im_observation
+        saved_mesh_filename = f"{timestamp_}_step_{self.step_no}.obj"
+        self.save_trimesh(self.result_trimesh,self.save_path,saved_mesh_filename)
+        # self.im_observation = self.mesh_to_observation(timestamp_)
 
+        Fx = self.action[0]
+        Fy = self.action[1]
+        F = self.action[2]
+        row_data = [self.old_state_name,Fx,Fy,F,saved_mesh_filename]
+        self.old_state_name = saved_mesh_filename
+        self.add_to_excel_file(row_data,xls_file=self.xls_filename,xls_pth=self.xls_pth)
+        
     
     def add_to_excel_file(self,row_data,xls_file,xls_pth):
 
@@ -663,31 +530,20 @@ class FreeCADWrapper(object):
         
     def reset_env(self):
         
-        # only keep objects that are created in decument_setup()
-        keep_objs=['Analysis',
-                   'SolidMaterial',
-                   'CalculiXccxTools']
-        
-        for objct in self.doc.Objects:
-            if not objct.Name in keep_objs:
-                print(f'removed: {objct.Name}')
-                self.doc.removeObject(objct.Name)
-        
         del self.trimesh_scene_meshes
         self.trimesh_scene_meshes = []
         del self.constraint_scene_meshes
         self.constraint_scene_meshes = []
         
         self.fail = False
-        self.doc,self.state0_trimesh, self.initMesh_Name, self.mesh_OK = self.init_state()
         self.result_trimesh = self.state0_trimesh
-        if not self.mesh_OK: print('*** init mesh is not acceptable!')
-        self.trimesh_scene_meshes.append(self.state0_trimesh)
-        
-        print(f'step no:{self.step_no}')
+        self.old_state_name = 'Mesh0.obj'
+        self.trimesh_scene_meshes.append(self.result_trimesh)
+        self.step_no = 0
+        print(f'reset_func --> step no:{self.step_no}') 
+        self.reset_femmesh()
+        return self.result_trimesh
 
-        print(f"+ . + . + . + . observation_image_size:{self.im_observation.size}")
-        return self.im_observation
     
     def view_all_states(self):
         i=0
@@ -729,6 +585,16 @@ class FreeCADWrapper(object):
         print(gt_to_gen_chamfer + gen_to_gt_chamfer)
         return gt_to_gen_chamfer + gen_to_gt_chamfer
 
+    def mesh_to_observation(self,timestamp_):
+        colored_result_mesh = self.trimesh_to_color_depth(self.result_trimesh)
+        rgbimg, depth_img = self.make_observation(colored_result_mesh)
+        self.im_observation = Image.fromarray(rgbimg).resize([64,48]).crop(box=[5,15,60,38])
+        save_obs=False
+        if(save_obs):
+            self.im_observation.save(os.path.join(self.save_path,f'{timestamp_}.png'))
+        # self.im_observation = np.asarray(self.im_observation) # img or array
+        return self.im_observation
+    
     def make_observation(self,trmsh):
         camera_pres = pyrender.PerspectiveCamera(yfov=np.pi / 3.0)
         s = np.sqrt(2)/2
