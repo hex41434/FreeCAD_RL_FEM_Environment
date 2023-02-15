@@ -53,7 +53,7 @@ class RLFEM(gym.Env):
         
         # self.gt_mesh = trimesh.load_mesh(gt_mesh_path) #TODO
         
-        self.max_steps = 3
+        self.max_steps = 20
 
     def reset(self):
         """Resets the environment and starts from an initial state.
@@ -74,9 +74,9 @@ class RLFEM(gym.Env):
         self.interface.create_fem_analysis(action)
         self.interface.doc, self.interface.fea,self.interface.fem_ok = self.interface.run_ccx_updated_inp()
         if not self.interface.fem_ok: # jump out... 
-            print('X - X - X - X -X - X -X - X - FEM not OK')
+            print(colored('X - X - X - X -X - X -X - X - FEM not OK','red'))
             return [], 0, True, ''
-    
+        
         self.interface.step_no +=1
         self.interface.result_trimesh,self.interface.result_FCmesh = self.interface.resultmesh_to_trimesh()
         self.new_state = self.interface.save_state() # TODO return?!

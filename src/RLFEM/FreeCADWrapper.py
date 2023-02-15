@@ -348,9 +348,7 @@ class FreeCADWrapper(object):
             print("--------")
             print(f"invalid_points: {invalid_points}, has_manifolds: {has_manifolds}, orient_faces: {orient_faces}, self_intersect: {self_intersect}")
             print("--------")
-            print(colored("     XXX Mesh is not healthy!  XXX ",'red'))
-        else:
-            print(colored("     +++ Mesh is healthy!  +++ ",'green'))    
+            print(colored("     XXX Mesh is not healthy!  XXX ",'red'))    
 
         return mesh_OK
 
@@ -367,11 +365,11 @@ class FreeCADWrapper(object):
         self.doc = self.add_material()
         
         self.fea = ccxtools.FemToolsCcx()
-        self.fail = False
         
         # to create mesh from our initial state, we need a fem step with a very small force
         self.state0_trimesh = []
         self.mesh_OK = True
+        self.fem_ok = True
         self.step_no = 0
         self.action = (0,0,0)
         
@@ -535,7 +533,7 @@ class FreeCADWrapper(object):
         del self.constraint_scene_meshes
         self.constraint_scene_meshes = []
         
-        self.fail = False
+        self.fem_ok = True
         self.result_trimesh = self.state0_trimesh
         self.old_state_name = 'Mesh0.obj'
         self.trimesh_scene_meshes.append(self.result_trimesh)
