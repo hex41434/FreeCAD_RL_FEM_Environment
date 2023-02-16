@@ -78,13 +78,12 @@ class RLFEM(gym.Env):
             return [], 0, True, ''
         
         self.interface.step_no +=1
+        self.interface.new_Nodes = self.interface.compute_node_displacements()
         self.interface.result_trimesh,self.interface.result_FCmesh = self.interface.resultmesh_to_trimesh()
         self.new_state = self.interface.save_state() # TODO return?!
         self.interface.mesh_OK = self.interface.checkMesh(self.interface.result_FCmesh) #jump out
         if not self.interface.mesh_OK:
             return [], 0, True, ''
-        
-        self.interface.doc, self.interface.new_Nodes = self.interface.update_femmesh()
         
         print(colored(f'step_no- th:{self.interface.step_no}','green'))
         self.reward = 0 #np.random.uniform(0, 1, 1)[0]  # Random reward
