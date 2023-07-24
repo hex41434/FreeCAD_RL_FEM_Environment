@@ -53,7 +53,7 @@ class RLFEM(gym.Env):
         
         # self.gt_mesh = trimesh.load_mesh(gt_mesh_path) #TODO
         
-        self.max_steps = 20
+        self.max_steps = 5
 
     def reset(self):
         """Resets the environment and starts from an initial state.

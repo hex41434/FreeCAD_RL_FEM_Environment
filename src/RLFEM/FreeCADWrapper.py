@@ -31,6 +31,7 @@ from scipy.spatial import cKDTree as KDTree
 from termcolor import colored
 from PIL import Image
 import fileinput
+import datetime as dt 
 class FreeCADWrapper(object):
     """Class allowing to interact with the FreeCad simulation.
 
@@ -64,12 +65,17 @@ class FreeCADWrapper(object):
             'render_mode',
             'load_3d'}
 
-        self.save_path = cfg['save_path']
+        dat = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.save_path = os.path.join(cfg['save_path'],dat)
+        if not os.path.exists(self.save_path):
+            os.mkdir(self.save_path)
         self.loaded_mesh_path = cfg['loaded_mesh_path']
         self.loaded_mesh_filename = cfg['loaded_mesh_filename']
         self.gt_mesh_path = cfg['gt_mesh_path']
         self.view_meshes = cfg['view_meshes']
-        self.xls_pth = cfg['xls_pth']
+        self.xls_pth = os.path.join(cfg['xls_pth'],dat)
+        if not os.path.exists(self.xls_pth):
+            os.mkdir(self.xls_pth)
         self.xls_filename = cfg['xls_filename']
         self.render_mode = cfg['render_mode']
         self.load_3d = cfg['load_3d']
@@ -81,7 +87,10 @@ class FreeCADWrapper(object):
         self.constraint_scene_meshes = []
         self.view_meshes = view_meshes #True # for jupyter nb TODO
         
-        self.inp_dir = os.path.join(os.getcwd(),'my_inp_folder')
+        self.inp_dir = os.path.join(os.getcwd(),f'my_inp_folder/{dat}')
+        if not os.path.exists(self.inp_dir):
+            os.mkdir(self.inp_dir)
+            
         self.inpfile = 'FEMMeshNetgen.inp'
          
         self.doc, self.state0_trimesh,self.mesh_OK = self.document_setup()
@@ -304,8 +313,8 @@ class FreeCADWrapper(object):
         femmesh_obj = self.doc.addObject('Fem::FemMeshShapeNetgenObject', 'FEMMeshNetgen')
         femmesh_obj.Fineness = "Fine"
         femmesh_obj.SecondOrder = False
-        femmesh_obj.Optimize = False
-        femmesh_obj.MaxSize = .5
+        femmesh_obj.Optimize = True
+        femmesh_obj.MaxSize = 1
         # create femmesh from object named:Solid
         femmesh_obj.Shape = self.doc.Solid 
         try:
@@ -376,9 +385,9 @@ class FreeCADWrapper(object):
         self.load_3d=False # TODO?!
         if(not self.load_3d):
             Solid_obj = self.doc.addObject("Part::Box", "Solid")
-            Solid_obj.Height = 2
-            Solid_obj.Width = 3
-            Solid_obj.Length = 10
+            Solid_obj.Height = 3
+            Solid_obj.Width = 4
+            Solid_obj.Length = 12
         
         self.doc, self.fem_ok = self.create_shape_femmesh()
         
@@ -406,12 +415,13 @@ class FreeCADWrapper(object):
         # i need to keep the state0 and the initial femmesh (femmesh0) --> (for reset function)
         self.state0_trimesh,self.result_FCmesh = self.resultmesh_to_trimesh() 
         self.result_trimesh = self.state0_trimesh
-            
+        # self.state0_trimesh.export('Mesh1402.obj') ##*** 
+        
         self.res_nd_no_0 = self.doc.CCX_Results.NodeNumbers
         self.res_mesh_0 = self.doc.ResultMesh.FemMesh
         self.old_state_name = 'Mesh0.obj'
         
-        # self.save_state() -> only needed once to write Mesh0.obj file 
+        # self.save_state() ##-> only needed once to write Mesh0.obj file 
         
         # we need to keep the mesh fixed -> manually update the node coordinates in inp file 
         self.new_Nodes = self.reset_femmesh()
