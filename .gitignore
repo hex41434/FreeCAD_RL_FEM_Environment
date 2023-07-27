@@ -139,3 +139,8 @@ dmypy.json
 /my_inp_files
 /scripts/inp_test
 /src/RLFEM/my_inp_folder
+data/meshlist.h5
+/data/data_old
+data/*
+data/old/*
+data/

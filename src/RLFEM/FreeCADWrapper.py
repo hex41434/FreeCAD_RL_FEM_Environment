@@ -93,7 +93,17 @@ class FreeCADWrapper(object):
             
         self.inpfile = 'FEMMeshNetgen.inp'
          
-        self.doc, self.state0_trimesh,self.mesh_OK = self.document_setup()
+        self.doc, self.state0_trimesh,self.mesh_OK,res_mesh_0 = self.document_setup() ##fc mesh 
+        
+        ## print map for nodes and vertices
+        ## for f in self.state0_trimesh.faces:
+        ##     print('f ' , f[0], ' ', f[1], ' ' ,f[2])
+        ## for ii,vv in enumerate(self.state0_trimesh.vertices):
+        ##     print('(', ii,',', vv[0],',',vv[1],',',vv[2],'),')
+        
+        ## for ii, nn in enumerate(res_mesh_0.Nodes.items()):
+        ##     print((nn))
+
         
         if not self.mesh_OK: print('*** init mesh is not acceptable!') 
         self.trimesh_scene_meshes.append(self.state0_trimesh)
@@ -412,21 +422,21 @@ class FreeCADWrapper(object):
         else:
             print("Oh, we have a problem! {}\n".format(message))  # in python console
 
-        # i need to keep the state0 and the initial femmesh (femmesh0) --> (for reset function)
+        ## i need to keep the state0 and the initial femmesh (femmesh0) --> (for reset function)
         self.state0_trimesh,self.result_FCmesh = self.resultmesh_to_trimesh() 
         self.result_trimesh = self.state0_trimesh
-        # self.state0_trimesh.export('Mesh1402.obj') ##*** 
+        ## self.state0_trimesh.export('Mesh1402.obj') ##*** write only once
         
         self.res_nd_no_0 = self.doc.CCX_Results.NodeNumbers
         self.res_mesh_0 = self.doc.ResultMesh.FemMesh
-        self.old_state_name = 'Mesh0.obj'
+        self.old_state_name = 'Mesh1402.obj'
         
-        # self.save_state() ##-> only needed once to write Mesh0.obj file 
-        
-        # we need to keep the mesh fixed -> manually update the node coordinates in inp file 
+        ## self.save_state() ##-> only needed once to write Mesh0.obj file 
+        fem_mesh = self.doc.FEMMeshNetgen.FemMesh
+        ## we need to keep the mesh fixed -> manually update the node coordinates in inp file 
         self.new_Nodes = self.reset_femmesh()
         
-        return self.doc ,self.state0_trimesh, self.mesh_OK # 2 last objs needed?!
+        return self.doc ,self.state0_trimesh, self.mesh_OK, fem_mesh # 2 last objs needed?!
 
     def create_analysis(self):
         analysis_object = ObjectsFem.makeAnalysis(self.doc, 'Analysis')
@@ -482,9 +492,9 @@ class FreeCADWrapper(object):
         timestamp_ = "_"+dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         
         saved_mesh_filename = f"{timestamp_}_step_{self.step_no}.obj"
-        # self.save_trimesh(self.result_trimesh,self.save_path,f"{timestamp_}_trimesh_step_{self.step_no}.obj")
+        ## self.save_trimesh(self.result_trimesh,self.save_path,f"{timestamp_}_trimesh_step_{self.step_no}.obj")
         self.save_mesh_obj_from_nodes(self.save_path,saved_mesh_filename)
-        # self.im_observation = self.mesh_to_observation(timestamp_)
+        ## self.im_observation = self.mesh_to_observation(timestamp_)
 
         Fx = self.action[0]
         Fy = self.action[1]
@@ -501,7 +511,7 @@ class FreeCADWrapper(object):
                 vertex_coordinates = f'v {self.new_Nodes[n-1][1]} {self.new_Nodes[n-1][2]} {self.new_Nodes[n-1][3]}\n'# Node index from 1
                 f.write(vertex_coordinates)
             
-            with open('/scratch/aifa/MyRepo/RL_FEM/gym_RLFEM/FreeCAD_RL_FEM_Environment/data/Mesh0_template_face_indx.txt') as readfile:
+            with open('/scratch/aifa/MyRepo/RL_FEM/gym_RLFEM/FreeCAD_RL_FEM_Environment/data/1402/Mesh1402_template_face_indx.txt') as readfile:
                 line = readfile.readline()
                 f.write(line)
                 while line:
@@ -562,7 +572,7 @@ class FreeCADWrapper(object):
         
         self.fem_ok = True
         self.result_trimesh = self.state0_trimesh
-        self.old_state_name = 'Mesh0.obj'
+        self.old_state_name = 'Mesh1402.obj'
         self.trimesh_scene_meshes.append(self.result_trimesh)
         self.step_no = 0
         print(f'reset_func --> step no:{self.step_no}') 
@@ -649,8 +659,211 @@ class FreeCADWrapper(object):
         trmsh.visual.vertex_colors = trimesh.visual.interpolate(radii, color_map=cmap[0])
         return trmsh
     
-    def node_vertex_map_list(self):
-        map = [7,
+    def node_vertex_map_list(self,meshfile='Mesh1402.obj'):
+        
+        if meshfile ==  'Mesh1402.obj':
+            map = [7,
+                    5,
+                    39,
+                    38,
+                    37,
+                    98,
+                    59,
+                    45,
+                    31,
+                    17,
+                    3,
+                    1,
+                    53,
+                    52,
+                    51,
+                    56,
+                    42,
+                    62,
+                    48,
+                    88,
+                    54,
+                    40,
+                    181,
+                    188,
+                    133,
+                    143,
+                    67,
+                    10,
+                    112,
+                    170,
+                    11,
+                    147,
+                    9,
+                    94,
+                    12,
+                    175,
+                    8,
+                    138,
+                    92,
+                    78,
+                    104,
+                    148,
+                    152,
+                    127,
+                    73,
+                    63,
+                    49,
+                    80,
+                    79,
+                    26,
+                    86,
+                    123,
+                    103,
+                    177,
+                    160,
+                    163,
+                    166,
+                    74,
+                    156,
+                    99,
+                    178,
+                    141,
+                    117,
+                    199,
+                    189,
+                    68,
+                    200,
+                    71,
+                    96,
+                    77,
+                    198,
+                    84,
+                    144,
+                    89,
+                    157,
+                    110,
+                    168,
+                    113,
+                    124,
+                    72,
+                    195,
+                    101,
+                    61,
+                    47,
+                    64,
+                    50,
+                    197,
+                    69,
+                    196,
+                    140,
+                    22,
+                    36,
+                    95,
+                    186,
+                    185,
+                    105,
+                    125,
+                    161,
+                    55,
+                    41,
+                    162,
+                    14,
+                    107,
+                    83,
+                    155,
+                    136,
+                    182,
+                    149,
+                    34,
+                    20,
+                    179,
+                    114,
+                    109,
+                    35,
+                    154,
+                    159,
+                    76,
+                    116,
+                    171,
+                    58,
+                    44,
+                    91,
+                    28,
+                    32,
+                    18,
+                    134,
+                    169,
+                    167,
+                    139,
+                    151,
+                    33,
+                    19,
+                    66,
+                    190,
+                    191,
+                    70,
+                    135,
+                    180,
+                    85,
+                    132,
+                    153,
+                    82,
+                    172,
+                    130,
+                    165,
+                    111,
+                    146,
+                    13,
+                    173,
+                    142,
+                    184,
+                    87,
+                    187,
+                    145,
+                    90,
+                    164,
+                    65,
+                    192,
+                    193,
+                    194,
+                    100,
+                    174,
+                    102,
+                    131,
+                    27,
+                    150,
+                    119,
+                    108,
+                    126,
+                    29,
+                    15,
+                    106,
+                    24,
+                    4,
+                    2,
+                    23,
+                    25,
+                    118,
+                    21,
+                    97,
+                    122,
+                    158,
+                    183,
+                    30,
+                    16,
+                    81,
+                    75,
+                    128,
+                    129,
+                    93,
+                    120,
+                    176,
+                    60,
+                    46,
+                    57,
+                    43,
+                    137,
+                    121,
+                    115,
+                    6]
+        else:
+            map = [7,
             5,
             57,
             58,
